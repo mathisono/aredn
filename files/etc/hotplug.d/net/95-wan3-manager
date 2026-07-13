@@ -1,0 +1,18 @@
+#!/bin/sh
+# Re-evaluate USB WAN when a network device is added or removed.
+
+case "${ACTION:-}" in
+    add|remove)
+        case "${INTERFACE:-}${DEVICENAME:-}${DEVICE:-}" in
+            *usb*|*rndis*|*wwan*|*enx*)
+                /usr/local/bin/wan3-manager apply >/dev/null 2>&1 &
+                ;;
+            *)
+                target="$(readlink -f "/sys/class/net/${INTERFACE:-unknown}/device" 2>/dev/null || true)"
+                case "$target" in
+                    *'/usb'*) /usr/local/bin/wan3-manager apply >/dev/null 2>&1 & ;;
+                esac
+                ;;
+        esac
+        ;;
+esac
