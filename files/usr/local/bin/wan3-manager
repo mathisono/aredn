@@ -1,0 +1,398 @@
+#!/bin/sh
+#
+# Part of AREDN® -- Used for creating Amateur Radio Emergency Data Networks
+# Copyright (C) 2026 AREDN contributors
+# See Contributors file for additional contributors
+#
+# Manage the optional third (USB) WAN and its upstream HTTP CONNECT proxy.
+# This component is deliberately separate from node-setup so that existing
+# single-WAN behaviour is unchanged when USB WAN is disabled.
+
+set -u
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+STATE_DIR=/tmp/wan3
+STATE_FILE="$STATE_DIR/state.json"
+REDSOCKS_CONF="$STATE_DIR/redsocks.conf"
+REDSOCKS_PID=/var/run/wan3-redsocks.pid
+NFT_TABLE=aredn_wan3_proxy
+CONFIG_PACKAGE=aredn
+CONFIG_SECTION=multiwan
+
+mkdir -p "$STATE_DIR" || exit 1
+
+log()
+{
+    logger -t wan3-manager "$*"
+}
+
+uci_get()
+{
+    uci -c /etc/config.mesh -q get "$CONFIG_PACKAGE.$CONFIG_SECTION.$1" 2>/dev/null || true
+}
+
+json_escape()
+{
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s/\n/\\n/g'
+}
+
+conf_escape()
+{
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/[\r\n]//g'
+}
+
+valid_device()
+{
+    case "$1" in
+        ''|*[!A-Za-z0-9_.:-]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+valid_ipv4()
+{
+    printf '%s\n' "$1" | awk -F. '
+        NF != 4 { bad = 1 }
+        { for (i = 1; i <= 4; i++) if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) bad = 1 }
+        END { exit bad }
+    '
+}
+
+valid_port()
+{
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+is_usb_netdev()
+{
+    dev="$1"
+    [ -e "/sys/class/net/$dev" ] || return 1
+
+    case "$dev" in
+        lo|br*|wlan*|phy*|ifb*|wg*|tun*|dtd*) return 1 ;;
+    esac
+
+    target="$(readlink -f "/sys/class/net/$dev/device" 2>/dev/null || true)"
+    case "$target" in
+        *'/usb'*|*'/usb'*) return 0 ;;
+    esac
+
+    case "$dev" in
+        usb[0-9]*|rndis[0-9]*|wwan[0-9]*|enx*) return 0 ;;
+    esac
+    return 1
+}
+
+detect_device()
+{
+    configured="$(uci_get wan3_device)"
+    [ -n "$configured" ] || configured=auto
+
+    if [ "$configured" != auto ]; then
+        valid_device "$configured" || return 1
+        [ -e "/sys/class/net/$configured" ] || return 1
+        printf '%s\n' "$configured"
+        return 0
+    fi
+
+    for path in /sys/class/net/*; do
+        [ -e "$path" ] || continue
+        dev="${path##*/}"
+        if is_usb_netdev "$dev"; then
+            printf '%s\n' "$dev"
+            return 0
+        fi
+    done
+    return 1
+}
+
+remove_dynamic()
+{
+    if ubus call network.interface.wan3 status >/dev/null 2>&1; then
+        ubus call network.interface.wan3 down >/dev/null 2>&1 || true
+        ubus call network.interface.wan3 remove >/dev/null 2>&1 || true
+        sleep 1
+    fi
+}
+
+stop_proxy()
+{
+    nft delete table inet "$NFT_TABLE" >/dev/null 2>&1 || true
+    if [ -r "$REDSOCKS_PID" ]; then
+        pid="$(cat "$REDSOCKS_PID" 2>/dev/null || true)"
+        case "$pid" in
+            ''|*[!0-9]*) ;;
+            *) kill "$pid" >/dev/null 2>&1 || true ;;
+        esac
+        rm -f "$REDSOCKS_PID"
+    fi
+}
+
+write_state()
+{
+    status="$1"
+    device="${2:-}"
+    message="${3:-}"
+    active="$(uci_get active)"
+    [ -n "$active" ] || active=wan
+    proxy_enabled="$(uci_get wan3_proxy_enable)"
+    [ "$proxy_enabled" = 1 ] || proxy_enabled=0
+    tmp="$STATE_FILE.tmp.$$"
+    printf '{"status":"%s","device":"%s","message":"%s","active":"%s","proxy_enabled":%s,"time":"%s"}\n' \
+        "$(json_escape "$status")" \
+        "$(json_escape "$device")" \
+        "$(json_escape "$message")" \
+        "$(json_escape "$active")" \
+        "$proxy_enabled" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+start_proxy()
+{
+    [ "$(uci_get enabled)" = 1 ] || { stop_proxy; return 0; }
+    [ "$(uci_get active)" = wan3 ] || { stop_proxy; return 0; }
+    [ "$(uci_get wan3_proxy_enable)" = 1 ] || { stop_proxy; return 0; }
+
+    command -v redsocks >/dev/null 2>&1 || {
+        stop_proxy
+        write_state error "${1:-}" "redsocks is not installed"
+        log "redsocks is not installed"
+        return 1
+    }
+
+    proxy_host="$(uci_get wan3_proxy_host)"
+    proxy_port="$(uci_get wan3_proxy_port)"
+    proxy_user="$(uci_get wan3_proxy_username)"
+    proxy_pass="$(uci_get wan3_proxy_password)"
+    local_port="$(uci_get wan3_proxy_local_port)"
+    [ -n "$proxy_host" ] || proxy_host=192.168.49.1
+    [ -n "$proxy_port" ] || proxy_port=8000
+    [ -n "$local_port" ] || local_port=12345
+
+    valid_ipv4 "$proxy_host" || {
+        stop_proxy
+        write_state error "${1:-}" "Invalid proxy IPv4 address"
+        return 1
+    }
+    valid_port "$proxy_port" || {
+        stop_proxy
+        write_state error "${1:-}" "Invalid proxy port"
+        return 1
+    }
+    valid_port "$local_port" || {
+        stop_proxy
+        write_state error "${1:-}" "Invalid local redirect port"
+        return 1
+    }
+
+    stop_proxy
+
+    {
+        cat <<CONF
+base {
+    log_debug = off;
+    log_info = on;
+    log = "syslog:daemon";
+    daemon = on;
+    redirector = iptables;
+}
+
+redsocks {
+    local_ip = 127.0.0.1;
+    local_port = $local_port;
+    ip = $proxy_host;
+    port = $proxy_port;
+    type = http-connect;
+CONF
+        if [ -n "$proxy_user" ]; then
+            printf '    login = "%s";\n' "$(conf_escape "$proxy_user")"
+            printf '    password = "%s";\n' "$(conf_escape "$proxy_pass")"
+        fi
+        printf '}\n'
+    } > "$REDSOCKS_CONF" || return 1
+    chmod 600 "$REDSOCKS_CONF"
+
+    /usr/sbin/redsocks -c "$REDSOCKS_CONF" -p "$REDSOCKS_PID" >/dev/null 2>&1 || {
+        stop_proxy
+        write_state error "${1:-}" "Could not start redsocks"
+        return 1
+    }
+
+    nft_file="$STATE_DIR/proxy.nft"
+    cat > "$nft_file" <<NFT
+ table inet $NFT_TABLE {
+    chain prerouting {
+        type nat hook prerouting priority dstnat - 10; policy accept;
+        ip saddr { 10.0.0.0/8, 44.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } ip daddr { 0.0.0.0/8, 10.0.0.0/8, 44.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4 } return
+        ip saddr { 10.0.0.0/8, 44.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } meta l4proto tcp redirect to :$local_port
+    }
+    chain forward {
+        type filter hook forward priority filter - 10; policy accept;
+        ip saddr { 10.0.0.0/8, 44.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } ip daddr != { 10.0.0.0/8, 44.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } udp dport 443 reject
+    }
+ }
+NFT
+    nft -f "$nft_file" >/dev/null 2>&1 || {
+        stop_proxy
+        write_state error "${1:-}" "Could not install transparent proxy rules"
+        return 1
+    }
+
+    write_state ready "${1:-}" "USB WAN proxy is active"
+    log "transparent proxy enabled through $proxy_host:$proxy_port"
+}
+
+add_dynamic()
+{
+    device="$1"
+    remove_dynamic
+
+    . /usr/share/libubox/jshn.sh
+    json_init
+    json_add_string name wan3
+    json_add_string device "$device"
+    json_add_string proto dhcp
+    json_add_string zone wan
+    json_add_boolean defaultroute 1
+    json_add_boolean peerdns 0
+    json_add_int metric 30
+    json_add_string ip4table 103
+    ubus call network add_dynamic "$(json_dump)" >/dev/null 2>&1 || return 1
+    ubus call network.interface.wan3 up >/dev/null 2>&1 || true
+}
+
+interface_values()
+{
+    name="$1"
+    status="$(ubus call "network.interface.$name" status 2>/dev/null)" || return 1
+    up="$(printf '%s' "$status" | jsonfilter -e '@.up' 2>/dev/null || true)"
+    [ "$up" = true ] || [ "$up" = 1 ] || return 1
+    device="$(printf '%s' "$status" | jsonfilter -e '@.l3_device' 2>/dev/null || true)"
+    source="$(printf '%s' "$status" | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null || true)"
+    valid_device "$device" || return 1
+    valid_ipv4 "$source" || return 1
+    route="$(ip -4 route show table all default dev "$device" 2>/dev/null | head -n 1 || true)"
+    [ -n "$route" ] || return 1
+    gateway="$(printf '%s\n' "$route" | sed -n 's/.* via \([^ ]*\).*/\1/p')"
+    printf '%s|%s|%s\n' "$device" "$source" "$gateway"
+}
+
+select_wan()
+{
+    selected="$1"
+    persist="${2:-1}"
+    [ "$(uci_get enabled)" = 1 ] || return 1
+    case "$selected" in wan|wan2|wan3) ;; *) return 2 ;; esac
+
+    values="$(interface_values "$selected")" || {
+        write_state error "" "$selected is not ready"
+        return 1
+    }
+    old_ifs="$IFS"; IFS='|'; set -- $values; IFS="$old_ifs"
+    device="$1"; source="$2"; gateway="${3:-}"
+
+    while ip -4 route del default table main >/dev/null 2>&1; do :; done
+    if valid_ipv4 "$gateway"; then
+        ip -4 route add default via "$gateway" dev "$device" src "$source" metric 1 proto static || return 1
+    else
+        ip -4 route add default dev "$device" src "$source" metric 1 proto static || return 1
+    fi
+
+    if [ "$persist" = 1 ]; then
+        uci -c /etc/config.mesh set "$CONFIG_PACKAGE.$CONFIG_SECTION.active=$selected"
+        uci -c /etc/config.mesh commit "$CONFIG_PACKAGE"
+    fi
+
+    if [ "$selected" = wan3 ]; then
+        start_proxy "$device" || true
+    else
+        stop_proxy
+        write_state ready "$device" "$selected is active"
+    fi
+    log "$selected selected as the main default route"
+}
+
+apply()
+{
+    if [ "$(uci_get enabled)" != 1 ] || [ "$(uci_get wan3_enable)" != 1 ]; then
+        remove_dynamic
+        stop_proxy
+        write_state disabled "" "USB WAN is disabled"
+        return 0
+    fi
+
+    device="$(detect_device)" || {
+        remove_dynamic
+        stop_proxy
+        write_state waiting "" "Waiting for a supported USB network device"
+        return 0
+    }
+
+    add_dynamic "$device" || {
+        write_state error "$device" "Could not create wan3"
+        return 1
+    }
+    write_state configuring "$device" "wan3 is requesting an address"
+
+    active="$(uci_get active)"
+    [ -n "$active" ] || active=wan
+    if [ "$active" = wan3 ]; then
+        select_wan wan3 0 >/dev/null 2>&1 || true
+    else
+        stop_proxy
+    fi
+}
+
+remove_all()
+{
+    remove_dynamic
+    stop_proxy
+    write_state disabled "" "USB WAN is stopped"
+}
+
+route_event()
+{
+    changed="${1:-}"
+    action="${2:-}"
+    active="$(uci_get active)"
+    [ -n "$active" ] || active=wan
+    [ "$changed" = "$active" ] || return 0
+    case "$action" in
+        ifup|up) select_wan "$active" 0 >/dev/null 2>&1 || true ;;
+        ifdown|down)
+            [ "$active" = wan3 ] && stop_proxy
+            ;;
+    esac
+}
+
+status()
+{
+    if [ -r "$STATE_FILE" ]; then
+        cat "$STATE_FILE"
+    else
+        write_state unknown "" "No USB WAN state is available"
+        cat "$STATE_FILE"
+    fi
+}
+
+case "${1:-apply}" in
+    apply) apply ;;
+    remove|stop) remove_all ;;
+    select)
+        [ $# -eq 2 ] || exit 2
+        select_wan "$2" 1
+        ;;
+    route-event) route_event "${2:-}" "${3:-}" ;;
+    proxy-start)
+        device="$(detect_device 2>/dev/null || true)"
+        start_proxy "$device"
+        ;;
+    proxy-stop) stop_proxy ;;
+    status) status ;;
+    *) echo "usage: $0 {apply|remove|select WAN|route-event IFACE ACTION|proxy-start|proxy-stop|status}" >&2; exit 2 ;;
+esac
