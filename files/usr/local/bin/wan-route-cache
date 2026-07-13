@@ -1,0 +1,31 @@
+#!/bin/sh
+# Preserve each WAN's learned default in a private table so manual switching
+# still works after the selected route replaces the main-table default.
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+cache_one()
+{
+    name="$1"
+    table="$2"
+    status="$(ubus call "network.interface.$name" status 2>/dev/null)" || return 0
+    up="$(printf '%s' "$status" | jsonfilter -e '@.up' 2>/dev/null || true)"
+    [ "$up" = true ] || [ "$up" = 1 ] || return 0
+    device="$(printf '%s' "$status" | jsonfilter -e '@.l3_device' 2>/dev/null || true)"
+    case "$device" in ''|*[!A-Za-z0-9_.:-]*) return 0 ;; esac
+    route="$(ip -4 route show table main default dev "$device" 2>/dev/null | head -n 1 || true)"
+    [ -n "$route" ] || return 0
+    ip -4 route replace table "$table" $route >/dev/null 2>&1 || true
+}
+
+case "${1:-all}" in
+    wan) cache_one wan 101 ;;
+    wan2) cache_one wan2 102 ;;
+    wan3) : ;; # netifd already owns table 103
+    all)
+        cache_one wan 101
+        cache_one wan2 102
+        ;;
+    *) exit 2 ;;
+esac
