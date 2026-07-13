@@ -53,6 +53,36 @@ valid_port()
     [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
 }
 
+valid_calibration_host()
+{
+    host="$1"
+    case "$host" in
+        ''|.*|*.|*..*|*[!A-Za-z0-9.-]*) return 1 ;;
+    esac
+    [ "${#host}" -le 253 ] || return 1
+    old_ifs="$IFS"
+    IFS='.'
+    set -- $host
+    IFS="$old_ifs"
+    for label in "$@"; do
+        case "$label" in
+            ''|-*|*-|*[!A-Za-z0-9-]*) return 1 ;;
+        esac
+    done
+}
+
+valid_calibration_url()
+{
+    url="$1"
+    host="$2"
+    [ "${#url}" -le 1024 ] || return 1
+    case "$url" in
+        *[[:space:]]*|*#*) return 1 ;;
+        "https://$host/"?*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 now_epoch() { date +%s; }
 now_text() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -99,11 +129,11 @@ CDN_PROVIDER="$(uci -c /etc/config.mesh -q get "$CONFIG_PACKAGE.$CONFIG_SECTION.
 CDN_HOST="$(uci -c /etc/config.mesh -q get "$CONFIG_PACKAGE.$CONFIG_SECTION.calibration_host" 2>/dev/null || true)"
 CDN_URL="$(uci -c /etc/config.mesh -q get "$CONFIG_PACKAGE.$CONFIG_SECTION.calibration_url" 2>/dev/null || true)"
 COOLDOWN="$(uci -c /etc/config.mesh -q get "$CONFIG_PACKAGE.$CONFIG_SECTION.calibration_cooldown" 2>/dev/null || true)"
-[ -n "$CDN_PROVIDER" ] || CDN_PROVIDER="Hurricane Electric / Hayward Internet Exchange"
+[ -n "$CDN_PROVIDER" ] || CDN_PROVIDER="User-selected HTTPS calibration object"
 case "$COOLDOWN" in ''|*[!0-9]*) COOLDOWN=300 ;; esac
 [ "$COOLDOWN" -lt 30 ] && COOLDOWN=30
-case "$CDN_HOST" in ''|.*|*..*|*[!A-Za-z0-9.-]*) fail "Hayward CDN endpoint is not configured" ;; esac
-case "$CDN_URL" in "https://$CDN_HOST/"*) ;; *) fail "Hayward CDN URL does not match its configured HTTPS host" ;; esac
+valid_calibration_host "$CDN_HOST" || fail "A valid HTTPS calibration object has not been configured"
+valid_calibration_url "$CDN_URL" "$CDN_HOST" || fail "The saved calibration URL is invalid or does not match its saved host"
 
 LAST=0
 if [ -r "$LAST_FILE" ]; then read -r LAST < "$LAST_FILE" || LAST=0; fi
@@ -157,7 +187,7 @@ measure()
     BYTES_REQUESTED="$1"
     LABEL="$2"
     CURL_ERROR="$STATE_DIR/$INTERFACE.curl-error.$$"
-    write_status running "Downloading a bounded sample from the Hayward CDN" "$LABEL"
+    write_status running "Downloading a bounded sample from the configured HTTPS object" "$LABEL"
 
     set -- --silent --show-error --fail --proto '=https' --proto-redir '=https' --max-redirs 0 \
         --connect-timeout 5 --max-time 35 --max-filesize "$((BYTES_REQUESTED + 4096))" \
@@ -176,7 +206,7 @@ measure()
     if [ "$CURL_RC" -ne 0 ]; then
         logger -t wan-calibrate "$INTERFACE curl failure: $(tr '\n' ' ' < "$CURL_ERROR" | cut -c1-160)"
         rm -f "$CURL_ERROR"
-        fail "Hayward CDN sample download failed"
+        fail "Calibration object sample download failed"
     fi
     rm -f "$CURL_ERROR"
 
@@ -187,10 +217,10 @@ measure()
     REMOTE_IP="${4:-}"
     BYTES_INTEGER="${BYTES_RECEIVED%%.*}"
 
-    [ "$HTTP_CODE" = 206 ] || fail "Hayward CDN object did not honor the byte-range request"
-    case "$BYTES_INTEGER" in ''|*[!0-9]*) fail "Hayward CDN returned an invalid byte count" ;; esac
-    [ "$BYTES_INTEGER" -eq "$BYTES_REQUESTED" ] || fail "Hayward CDN returned an incomplete sample"
-    case "$REMOTE_IP" in ''|*[!0-9a-fA-F:.]*) fail "Hayward CDN returned an invalid remote address" ;; esac
+    [ "$HTTP_CODE" = 206 ] || fail "Calibration object did not honor the byte-range request"
+    case "$BYTES_INTEGER" in ''|*[!0-9]*) fail "Calibration object returned an invalid byte count" ;; esac
+    [ "$BYTES_INTEGER" -eq "$BYTES_REQUESTED" ] || fail "Calibration object returned an incomplete sample"
+    case "$REMOTE_IP" in ''|*[!0-9a-fA-F:.]*) fail "Calibration object returned an invalid remote address" ;; esac
     SAMPLE_MBPS="$(awk -v bytes="$BYTES_RECEIVED" -v seconds="$SAMPLE_SECONDS" 'BEGIN { if (seconds <= 0) exit 1; printf "%.2f", (bytes * 8.0) / seconds / 1000000.0 }')" || fail "Could not calculate calibration throughput"
     TOTAL_BYTES=$((TOTAL_BYTES + BYTES_INTEGER))
     TOTAL_SECONDS="$(awk -v total="$TOTAL_SECONDS" -v sample="$SAMPLE_SECONDS" 'BEGIN { printf "%.3f", total + sample }')" || fail "Could not account for calibration duration"
