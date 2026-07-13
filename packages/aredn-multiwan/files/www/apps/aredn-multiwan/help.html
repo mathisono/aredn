@@ -8,7 +8,7 @@
 body{font-family:system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;line-height:1.5;color:#1f2937}code,pre{background:#f3f4f6;border-radius:.3rem}code{padding:.1rem .25rem}pre{padding:1rem;overflow:auto}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d1d5db;padding:.45rem;text-align:left}.note{border-left:4px solid #f59e0b;padding:.5rem 1rem;background:#fffbeb}.ok{border-left:4px solid #10b981;padding:.5rem 1rem;background:#ecfdf5}h1,h2{line-height:1.2}</style>
 </head>
 <body>
-<h1>AREDN Multi-WAN and USB WAN</h1>
+<h1>AREDN Multi-WAN and phone USB tether</h1>
 <p>This is an experimental, optional package for the MikroTik hAP ac lite, hAP ac2, and hAP ac3. Installing it does not enable multi-WAN. The existing AREDN WAN remains unchanged until an administrator enables the package and selects another path.</p>
 <div class="note"><strong>Before installation:</strong> check free overlay space, especially on the hAP ac lite. The package installs USB network drivers, redsocks, curl, and nftables dependencies as separate APKs.</div>
 
@@ -16,26 +16,39 @@ body{font-family:system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0
 <table><thead><tr><th>Name</th><th>Purpose</th></tr></thead><tbody>
 <tr><td><code>wan</code></td><td>Existing AREDN WAN.</td></tr>
 <tr><td><code>wan2</code></td><td>Second Ethernet WAN when it has been configured separately.</td></tr>
-<tr><td><code>wan3</code></td><td>USB RNDIS, CDC Ethernet, or CDC NCM tethering managed by this package.</td></tr>
+<tr><td><code>wan3</code></td><td>Android phone connected to the hAP USB host as an RNDIS, CDC Ethernet, or CDC NCM tether.</td></tr>
 </tbody></table>
+
+<h2>Required USB topology</h2>
+<pre>Android phone running PdaNet
+        |
+        | data-capable USB cable
+        v
+hAP USB host -> RNDIS/CDC network device -> wan3 DHCP
+        |
+        +-- optional PdaNet HTTP CONNECT proxy settings stored on the hAP</pre>
+<p>The hAP must first see a USB network adapter and obtain an IPv4 address on <code>wan3</code>. The PdaNet proxy is reached over that same USB network. A proxy address by itself is not enough when no USB network device or DHCP path exists.</p>
 
 <h2>PdaNet USB setup</h2>
 <ol>
-<li>Use a data-capable USB cable and connect the Android phone to the hAP USB host port.</li>
+<li>Use a data-capable USB cable and connect the Android phone directly to the hAP USB host port.</li>
 <li>Open PdaNet+ and enable <strong>Activate USB Mode</strong>. Leave PdaNet running.</li>
 <li>Log in to AREDN. Open the application menu and select <strong>aredn-multiwan</strong>.</li>
-<li>Open <strong>USB WAN</strong>, enable it, and leave the USB interface set to <code>auto</code>.</li>
-<li>Enable the upstream proxy when PdaNet requires it. Common defaults are <code>192.168.49.1</code>, TCP port <code>8000</code>, type HTTP CONNECT.</li>
-<li>Save. Wait for <code>wan3</code> to show an IPv4 address, then select <strong>Use USB WAN now</strong>.</li>
+<li>Open <strong>Phone USB Tether</strong>, enable WAN 3, and leave the hAP USB interface set to <code>auto</code>.</li>
+<li>Enable <strong>Use PdaNet upstream proxy</strong> when required. Enter the proxy information on the hAP. Common values are <code>192.168.49.1</code>, TCP port <code>8000</code>, type HTTP CONNECT.</li>
+<li>Optional username and password fields are also stored and used by the hAP.</li>
+<li>Save. Wait for <code>wan3</code> to show an IPv4 address, then select <strong>Use phone USB tether now</strong>.</li>
 <li>Select <strong>Use WAN 1</strong> before unplugging the phone when practical.</li>
 </ol>
 <p>The package runs a private redsocks process with its own configuration, PID file, nftables table, and TCP listener on port <code>12346</code> by default. It does not stop or disable a separately configured stock redsocks service.</p>
-<div class="note"><strong>Proxy limitation:</strong> HTTP CONNECT carries TCP. General UDP, incoming connections, and port forwarding do not work through PdaNet proxy mode. UDP/443 is rejected so browsers normally fall back from QUIC/HTTP/3 to TCP/HTTPS. A standard routed Android tether can be used with the proxy disabled.</div>
+<div class="note"><strong>Proxy limitation:</strong> HTTP CONNECT carries TCP. General UDP, incoming connections, and port forwarding do not work through PdaNet proxy mode. UDP/443 is rejected so browsers normally fall back from QUIC/HTTP/3 to TCP/HTTPS. A standard routed Android USB tether can be used with the proxy disabled.</div>
 
-<h2>Link calibration</h2>
-<p>Only a logged-in administrator can start calibration. The browser cannot provide a test URL. The package uses the configured Hurricane Electric / Hayward Internet Exchange HTTPS object and requests bounded byte ranges:</p>
+<h2>User-selected link calibration object</h2>
+<p>A logged-in administrator sets a descriptive label and a complete HTTPS object URL in <strong>WAN Link Calibration</strong>. The object is not hard-coded. Hurricane Electric/Hayward may be used, but any suitable administrator-selected HTTPS object is allowed.</p>
+<p>The object must use a valid certificate, include a DNS hostname and path, support byte ranges, return HTTP 206, contain at least 32 MiB, and avoid redirects. Embedded credentials, spaces, fragments, and custom ports are rejected. Saving a blank URL disables calibration.</p>
+<p>A calibration run can select only <code>wan</code>, <code>wan2</code>, or <code>wan3</code>; the run request cannot supply or replace the saved URL.</p>
 <ul><li>1 MiB initial sample</li><li>8 MiB when the path is near or above 5 Mbps</li><li>32 MiB when the path is near or above 30 Mbps</li></ul>
-<p>Maximum transfer is about 41 MiB. Results are <strong>low</strong> at 5 Mbps or less, <strong>medium</strong> above 5 through 30 Mbps, and <strong>fast</strong> above 30 Mbps. Calibration is measurement only in this package version; it does not yet perform automatic speed-based failover.</p>
+<p>Maximum transfer is about 41 MiB. Results are <strong>low</strong> at 5 Mbps or less, <strong>medium</strong> above 5 through 30 Mbps, and <strong>fast</strong> above 30 Mbps. For <code>wan3</code>, calibration remains bound to the phone USB tether and directly uses the saved PdaNet proxy when enabled.</p>
 
 <h2>Verify from an authenticated shell</h2>
 <pre>apk info -e aredn-multiwan
@@ -47,7 +60,8 @@ ip -4 route show table 103
 cat /var/run/wan3-redsocks.pid
 nft list table inet aredn_wan3_proxy
 logread -e wan3-manager
-logread -e redsocks</pre>
+logread -e redsocks
+logread -e wan-calibrate</pre>
 <div class="ok"><strong>Healthy USB proxy state:</strong> <code>wan3</code> is up with an IPv4 address, table 103 has a default route, the main table points through the USB device when selected, a private redsocks PID exists, and the <code>aredn_wan3_proxy</code> nftables table is present.</div>
 
 <h2>Recovery and uninstall</h2>
@@ -60,7 +74,7 @@ apk del aredn-multiwan</pre>
 <ul>
 <li>The package can select and calibrate <code>wan2</code>, but does not yet create its physical hAP port/VLAN definition.</li>
 <li>Automatic SLA and speed-bin failover are not enabled yet.</li>
-<li>Calibration stays disabled until the exact Hayward HTTPS hostname and range-capable object are configured.</li>
+<li>The package build and physical installation tests are the next development step.</li>
 </ul>
 </body>
 </html>
