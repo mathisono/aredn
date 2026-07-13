@@ -1,0 +1,20 @@
+#!/bin/sh /etc/rc.common
+# Manage the optional AREDN USB WAN after the base network is available.
+
+START=96
+STOP=10
+
+start()
+{
+    /usr/local/bin/wan3-manager apply >/dev/null 2>&1 || true
+}
+
+stop()
+{
+    /usr/local/bin/wan3-manager remove >/dev/null 2>&1 || true
+}
+
+reload()
+{
+    /usr/local/bin/wan3-manager apply >/dev/null 2>&1 || true
+}
