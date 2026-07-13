@@ -95,6 +95,7 @@ feeds-update: stamp-clean-feeds-updated .stamp-feeds-updated
 	cd $(OPENWRT_DIR); ./scripts/feeds install -p arednpackages whenandwhere
 	cd $(OPENWRT_DIR); ./scripts/feeds install snmpd
 	cd $(OPENWRT_DIR); ./scripts/feeds install curl
+	cd $(OPENWRT_DIR); ./scripts/feeds install redsocks
 	cd $(OPENWRT_DIR); ./scripts/feeds install ntpclient
 	cd $(OPENWRT_DIR); ./scripts/feeds install socat
 	cd $(OPENWRT_DIR); ./scripts/feeds install luci-lib-base
@@ -178,10 +179,3 @@ stamp-clean:
 	cd $(OPENWRT_DIR); quilt pop -a -f || [ $$? = 2 ] && true
 	rm -rf $(OPENWRT_DIR)/tmp
 	rm -f .stamp-patched
-	touch $@
-
-clean: stamp-clean .stamp-openwrt-cleaned
-
-.PHONY: openwrt-clean openwrt-update patch feeds-update prepare compile stamp-clean clean always
-.NOTPARALLEL:
-.FORCE:
