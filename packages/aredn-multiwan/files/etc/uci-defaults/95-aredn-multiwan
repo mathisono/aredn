@@ -16,7 +16,7 @@ set aredn.multiwan.wan3_proxy_port='8000'
 set aredn.multiwan.wan3_proxy_username=''
 set aredn.multiwan.wan3_proxy_password=''
 set aredn.multiwan.wan3_proxy_local_port='12346'
-set aredn.multiwan.calibration_provider='Hurricane Electric / Hayward Internet Exchange'
+set aredn.multiwan.calibration_provider='User-selected HTTPS calibration object'
 set aredn.multiwan.calibration_host=''
 set aredn.multiwan.calibration_url=''
 set aredn.multiwan.calibration_cooldown='300'
@@ -40,7 +40,7 @@ else
     set_default wan3_proxy_username ''
     set_default wan3_proxy_password ''
     set_default wan3_proxy_local_port 12346
-    set_default calibration_provider 'Hurricane Electric / Hayward Internet Exchange'
+    set_default calibration_provider 'User-selected HTTPS calibration object'
     set_default calibration_host ''
     set_default calibration_url ''
     set_default calibration_cooldown 300
@@ -49,6 +49,13 @@ else
     # example listener port. Move only that known old default to our private port.
     if [ "$($UCI -q get aredn.multiwan.wan3_proxy_local_port 2>/dev/null)" = 12345 ]; then
         $UCI set aredn.multiwan.wan3_proxy_local_port='12346'
+    fi
+
+    # Before r3 the blank endpoint carried a Hayward-specific label even though
+    # no URL was configured. Preserve any real configured endpoint or custom label.
+    if [ -z "$($UCI -q get aredn.multiwan.calibration_url 2>/dev/null)" ] && \
+       [ "$($UCI -q get aredn.multiwan.calibration_provider 2>/dev/null)" = 'Hurricane Electric / Hayward Internet Exchange' ]; then
+        $UCI set aredn.multiwan.calibration_provider='User-selected HTTPS calibration object'
     fi
 fi
 
