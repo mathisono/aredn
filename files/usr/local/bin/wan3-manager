@@ -18,10 +18,34 @@ STATE_FILE="$STATE_DIR/state.json"
 REDSOCKS_CONF="$STATE_DIR/redsocks.conf"
 REDSOCKS_PID=/var/run/wan3-redsocks.pid
 NFT_TABLE=aredn_wan3_proxy
+MANAGER_LOCK="$STATE_DIR/.manager.lock"
 CONFIG_PACKAGE=aredn
 CONFIG_SECTION=multiwan
 
 mkdir -p "$STATE_DIR" || exit 1
+
+acquire_manager_lock()
+{
+    tries=0
+    while ! mkdir "$MANAGER_LOCK" 2>/dev/null; do
+        oldpid="$(cat "$MANAGER_LOCK/pid" 2>/dev/null || true)"
+        case "$oldpid" in
+            ''|*[!0-9]*)
+                rm -rf "$MANAGER_LOCK"
+                ;;
+            *)
+                if ! kill -0 "$oldpid" 2>/dev/null; then
+                    rm -rf "$MANAGER_LOCK"
+                else
+                    tries=$((tries + 1))
+                    [ "$tries" -lt 15 ] || return 1
+                    sleep 1
+                fi
+                ;;
+        esac
+    done
+    printf '%s\n' "$$" > "$MANAGER_LOCK/pid"
+}
 
 log()
 {
@@ -127,7 +151,7 @@ stop_proxy()
         pid="$(cat "$REDSOCKS_PID" 2>/dev/null || true)"
         case "$pid" in
             ''|*[!0-9]*) ;;
-            *) kill "$pid" >/dev/null 2>&1 || true ;;
+            *) kill "$pid" >/dev/null 2>&1 || true; sleep 1 ;;
         esac
         rm -f "$REDSOCKS_PID"
     fi
@@ -355,12 +379,12 @@ select_wan()
 
     while ip -4 route del default table main >/dev/null 2>&1; do :; done
     if valid_ipv4 "$gateway"; then
-        ip -4 route add default via "$gateway" dev "$device" src "$source" metric 1 proto static || {
+        ip -4 route add default via "$gateway" dev "$device" src "$source" metric 1 onlink proto static || {
             restore_default "$old_default"
             return 1
         }
     else
-        ip -4 route add default dev "$device" src "$source" metric 1 proto static || {
+        ip -4 route add default dev "$device" src "$source" metric 1 onlink proto static || {
             restore_default "$old_default"
             return 1
         }
@@ -474,7 +498,16 @@ status()
     fi
 }
 
-case "${1:-apply}" in
+COMMAND="${1:-apply}"
+if [ "$COMMAND" != status ]; then
+    if ! acquire_manager_lock; then
+        log "Another WAN manager operation is still running"
+        exit 3
+    fi
+    trap 'rm -rf "$MANAGER_LOCK"' EXIT HUP INT TERM
+fi
+
+case "$COMMAND" in
     apply) apply ;;
     remove|stop) remove_all ;;
     select)
