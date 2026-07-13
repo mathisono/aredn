@@ -136,7 +136,7 @@ const calibrationRunning = calibrationRequested || !!fs.access(lockPath);
     {{_R("dialog-header", "WAN Link Calibration")}}
     <div id="link-calibration-state"
          hx-get="{{request.env.REQUEST_URI}}"
-         hx-trigger="{{calibrationRunning ? "every 2s [document.visibilityState === 'visible']" : ""}}"
+         hx-trigger="every 2s [document.visibilityState === 'visible']"
          hx-select="#link-calibration-state"
          hx-target="this"
          hx-swap="outerHTML">
