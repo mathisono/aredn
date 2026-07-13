@@ -57,6 +57,7 @@ endef
 define Package/aredn-multiwan/prerm
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] && exit 0
+/usr/local/bin/wan-route-cache wan >/dev/null 2>&1 || true
 /usr/local/bin/wan3-manager select wan >/dev/null 2>&1 || true
 /etc/init.d/wan3-manager stop >/dev/null 2>&1 || true
 /etc/init.d/wan3-manager disable >/dev/null 2>&1 || true
