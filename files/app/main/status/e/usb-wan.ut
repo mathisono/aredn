@@ -45,9 +45,10 @@ if (request.env.REQUEST_METHOD === "PUT") {
         const proxyEnabled = request.args.proxy_enable === "on" ? "1" : "0";
         const device = request.args.wan3_device || "auto";
         const proxyHost = request.args.proxy_host || "192.168.49.1";
-        const proxyPort = int(request.args.proxy_port || 8000);
+        const proxyPort = int(request.args.proxy_port || 0) ?? 0;
         const proxyUser = request.args.proxy_username || "";
         const proxyPassword = request.args.proxy_password || "";
+        const wasActive = (uciMesh.get("aredn", "multiwan", "active") || "wan") === "wan3";
 
         if (device !== "auto" && !match(device, /^[A-Za-z0-9_.:-]+$/)) error = "USB interface must be 'auto' or a valid Linux interface name";
         else if (!match(proxyHost, constants.reIP)) error = "Proxy address must be an IPv4 address";
@@ -64,23 +65,47 @@ if (request.env.REQUEST_METHOD === "PUT") {
             else if (request.args.proxy_password_clear === "on") uciMesh.set("aredn", "multiwan", "wan3_proxy_password", "");
             if (enabled === "1") uciMesh.set("aredn", "multiwan", "enabled", "1");
             uciMesh.commit("aredn");
-            system("/usr/local/bin/wan3-manager apply >/dev/null 2>&1 &");
-            message = enabled === "1" ? "USB WAN settings saved; device discovery is running" : "USB WAN disabled";
+
+            if (enabled === "0" && wasActive) {
+                if (system("/usr/local/bin/wan-route-cache wan >/dev/null 2>&1; /usr/local/bin/wan3-manager select wan >/dev/null 2>&1") === 0) {
+                    system("/usr/local/bin/wan3-manager remove >/dev/null 2>&1");
+                    message = "USB WAN disabled and WAN 1 restored";
+                }
+                else {
+                    uciMesh.set("aredn", "multiwan", "wan3_enable", "1");
+                    uciMesh.commit("aredn");
+                    error = "WAN 1 is not ready, so active USB WAN was left enabled";
+                }
+            }
+            else {
+                system(enabled === "1" ? "/usr/local/bin/wan3-manager apply >/dev/null 2>&1 &" : "/usr/local/bin/wan3-manager remove >/dev/null 2>&1 &");
+                message = enabled === "1" ? "USB WAN settings saved; device discovery is running" : "USB WAN disabled";
+            }
         }
     }
     else if (action === "activate") {
+        const previous = uciMesh.get("aredn", "multiwan", "active") || "wan";
         uciMesh.set("aredn", "multiwan", "enabled", "1");
         uciMesh.set("aredn", "multiwan", "wan3_enable", "1");
         uciMesh.set("aredn", "multiwan", "active", "wan3");
         uciMesh.commit("aredn");
-        if (system("/usr/local/bin/wan3-manager apply >/dev/null 2>&1; /usr/local/bin/wan3-manager select wan3 >/dev/null 2>&1") === 0) message = "USB WAN selected as the active Internet path";
-        else error = "USB WAN is not ready; verify the cable, PdaNet, DHCP, and proxy settings";
+        if (system("/usr/local/bin/wan-route-cache all >/dev/null 2>&1; /usr/local/bin/wan3-manager select wan3 >/dev/null 2>&1") === 0) message = "USB WAN selected as the active Internet path";
+        else {
+            uciMesh.set("aredn", "multiwan", "active", previous);
+            uciMesh.commit("aredn");
+            error = "USB WAN is not ready; verify the cable, PdaNet, DHCP, and proxy settings";
+        }
     }
     else if (action === "fallback") {
+        const previous = uciMesh.get("aredn", "multiwan", "active") || "wan";
         uciMesh.set("aredn", "multiwan", "active", "wan");
         uciMesh.commit("aredn");
-        if (system("/usr/local/bin/wan3-manager select wan >/dev/null 2>&1") === 0) message = "WAN 1 selected as the active Internet path";
-        else error = "WAN 1 is not ready";
+        if (system("/usr/local/bin/wan-route-cache wan >/dev/null 2>&1; /usr/local/bin/wan3-manager select wan >/dev/null 2>&1") === 0) message = "WAN 1 selected as the active Internet path";
+        else {
+            uciMesh.set("aredn", "multiwan", "active", previous);
+            uciMesh.commit("aredn");
+            error = "WAN 1 is not ready";
+        }
     }
     else error = "Invalid USB WAN action";
 }
@@ -109,7 +134,7 @@ const proxyRunning = !!fs.access("/var/run/wan3-redsocks.pid");
         {% if (message !== "") { %}<div>{{message}}</div><hr>{% } %}
         <div class="cols"><div><div class="o">Runtime status</div><div class="m">{{managerState?.message || (enabled ? "waiting for status" : "disabled")}}</div></div><div style="flex:0;text-align:right;white-space:nowrap"><div>{{interfaceUp ? "up" : "down"}}{{l3device ? " · " + l3device : ""}}</div><div class="m">{{address || "no IPv4 address"}}</div></div></div>
         <div class="cols"><div><div class="o">Current default</div><div class="m">Selected multi-WAN path</div></div><div style="flex:0">{{active}}</div></div>
-        <div class="cols"><div><div class="o">Transparent proxy</div><div class="m">TCP through HTTP CONNECT; UDP is not proxied</div></div><div style="flex:0">{{proxyRunning ? "running" : proxyEnabled ? "stopped" : "disabled"}}</div></div>
+        <div class="cols"><div><div class="o">Transparent proxy</div><div class="m">TCP through HTTP CONNECT; general UDP is not proxied</div></div><div style="flex:0">{{proxyRunning ? "running" : proxyEnabled ? "stopped" : "disabled"}}</div></div>
         <hr>
         <form id="usb-wan-form">
             <div class="cols"><div><div class="o">Enable USB WAN</div><div class="m">Create logical interface wan3 when a USB network device is present</div></div><div style="flex:0"><input type="checkbox" name="wan3_enable" {{enabled ? "checked" : ""}}></div></div>
@@ -122,7 +147,7 @@ const proxyRunning = !!fs.access("/var/run/wan3-redsocks.pid");
             <div class="cols"><div><div class="o">Proxy password</div><div class="m">Leave blank to keep {{haveProxyPassword ? "the saved password" : "no password"}}</div></div><div style="flex:0"><input name="proxy_password" type="password" size="20" maxlength="256" autocomplete="new-password"></div></div>
             {% if (haveProxyPassword) { %}<div class="cols"><div><div class="o">Clear saved password</div></div><div style="flex:0"><input type="checkbox" name="proxy_password_clear"></div></div>{% } %}
         </form>
-        {{_H("PdaNet USB mode normally exposes an HTTP CONNECT proxy at 192.168.49.1:8000. When enabled, AREDN runs redsocks and transparently redirects public IPv4 TCP sessions from local clients. Local mesh, LAN, private, and 44Net destinations are excluded. UDP cannot use an HTTP CONNECT proxy; UDP/443 is rejected while USB WAN is active so browsers fall back from QUIC/HTTP3 to TCP/HTTPS.")}}
+        {{_H("PdaNet USB mode commonly exposes an HTTP CONNECT proxy at 192.168.49.1:8000. When enabled, AREDN runs a private redsocks instance and redirects public IPv4 TCP sessions from LAN clients, plus public TCP created by the node itself. Mesh, LAN, private, 44Net, and the proxy destination are excluded. UDP cannot generally use an HTTP CONNECT proxy; UDP/443 is rejected while USB WAN is active so browsers can fall back from QUIC/HTTP3 to TCP/HTTPS.")}}
         <div class="cols"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#usb-wan-form" hx-vals='{"action":"save"}'>Save USB WAN</button><div style="flex:1"></div><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"fallback"}'>Use WAN 1</button><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"activate"}' {{!enabled || !interfaceUp ? "disabled" : ""}}>Use USB WAN now</button></div>
     </div>
     {{_R("dialog-footer", "nocancel")}}
