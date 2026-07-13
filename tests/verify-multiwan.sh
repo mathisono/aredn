@@ -172,7 +172,7 @@ require_text "$DEFAULTS" "set aredn.multiwan.calibration_provider='User-selected
 require_text "$DEFAULTS" "set aredn.multiwan.calibration_host=''"
 require_text "$DEFAULTS" "set aredn.multiwan.calibration_url=''"
 require_text "$DEFAULTS" "set aredn.multiwan.calibration_cooldown='300'"
-require_text "$DEFAULTS" "calibration_provider 2>/dev/null)' = 'Hurricane Electric / Hayward Internet Exchange'"
+require_text "$DEFAULTS" "calibration_provider 2>/dev/null)\" = 'Hurricane Electric / Hayward Internet Exchange'"
 
 # USB WAN must be a phone-to-hAP USB network input with hAP-side proxy fields.
 require_text "$MANAGER" 'json_add_string name wan3'
