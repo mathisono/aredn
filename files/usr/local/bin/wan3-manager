@@ -119,7 +119,7 @@ detect_device()
 
     if [ "$configured" != auto ]; then
         valid_device "$configured" || return 1
-        [ -e "/sys/class/net/$configured" ] || return 1
+        is_usb_netdev "$configured" || return 1
         printf '%s\n' "$configured"
         return 0
     fi
@@ -219,6 +219,9 @@ start_proxy()
     lan_device="$(printf '%s' "$lan_json" | jsonfilter -e '@.l3_device' 2>/dev/null || true)"
     valid_device "$lan_device" || lan_device=br-lan
 
+    # The feed package ships a generic init service using the same example
+    # listener port. AREDN owns a separate generated instance for wan3.
+    /etc/init.d/redsocks stop >/dev/null 2>&1 || true
     stop_proxy
 
     {
@@ -384,7 +387,7 @@ select_wan()
             return 1
         }
     else
-        ip -4 route add default dev "$device" src "$source" metric 1 onlink proto static || {
+        ip -4 route add default dev "$device" src "$source" metric 1 proto static || {
             restore_default "$old_default"
             return 1
         }
@@ -472,7 +475,23 @@ route_event()
     action="${2:-}"
     active="$(uci_get active)"
     [ -n "$active" ] || active=wan
-    [ "$changed" = "$active" ] || return 0
+    if [ "$changed" != "$active" ]; then
+        # DHCP renewals on standby WANs may reinsert their default into main.
+        # The hotplug wrapper has already refreshed the private route cache, so
+        # remove only the standby device's main-table default.
+        if [ "$(uci_get enabled)" = 1 ]; then
+            case "$action" in
+                ifup|ifupdate|up|update)
+                    status="$(ubus call "network.interface.$changed" status 2>/dev/null || true)"
+                    standby_device="$(printf '%s' "$status" | jsonfilter -e '@.l3_device' 2>/dev/null || true)"
+                    if valid_device "$standby_device"; then
+                        while ip -4 route del default dev "$standby_device" table main >/dev/null 2>&1; do :; done
+                    fi
+                    ;;
+            esac
+        fi
+        return 0
+    fi
     case "$action" in
         ifup|ifupdate|up|update)
             if ! select_wan "$active" 0 >/dev/null 2>&1; then
