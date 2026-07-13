@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=aredn-multiwan
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 PKG_LICENSE:=GPL-3.0-only
 PKG_MAINTAINER:=AREDN contributors
 PKGARCH:=all
@@ -22,8 +22,9 @@ endef
 
 define Package/aredn-multiwan/description
  Experimental AREDN multi-WAN package for the MikroTik hAP ac lite,
- hAP ac2, and hAP ac3. It provides an optional USB WAN, PdaNet HTTP
- CONNECT proxy support, manual route selection, and bounded link calibration.
+ hAP ac2, and hAP ac3. It provides an optional phone USB tether WAN,
+ PdaNet HTTP CONNECT proxy settings on the hAP, manual route selection,
+ and bounded calibration through an administrator-selected HTTPS object.
  The package is not installed in the base firmware image.
 endef
 
