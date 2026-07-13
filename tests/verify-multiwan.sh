@@ -27,13 +27,6 @@ require_text()
     grep -F -- "$text" "$file" >/dev/null || fail "$file does not contain: $text"
 }
 
-require_regex()
-{
-    file="$1"
-    expression="$2"
-    grep -E -- "$expression" "$file" >/dev/null || fail "$file does not match: $expression"
-}
-
 SHELL_FILES="
 files/usr/local/bin/wan3-manager
 files/usr/local/bin/wan-route-cache
@@ -42,6 +35,7 @@ files/etc/init.d/wan3-manager
 files/etc/hotplug.d/net/95-wan3-manager
 files/etc/hotplug.d/iface/95-wan3-manager
 files/etc/uci-defaults/98_wan3_redsocks
+tests/verify-multiwan.sh
 "
 
 for file in $SHELL_FILES; do
@@ -53,7 +47,7 @@ for file in $SHELL_FILES; do
     fi
 done
 
-# Runtime scripts and hooks must remain executable in git.
+# Runtime scripts, hooks, and this verifier must remain executable in git.
 if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     for file in $SHELL_FILES; do
         mode="$(git ls-files -s -- "$file" | awk '{print $1}')"
@@ -72,8 +66,9 @@ CAL_CARD=files/app/partial/link-calibration.ut
 TARGET_PATCH=patches/759-mikrotik-usb-wan.patch
 USB_DOC=docs/multiwan-usb-wan.md
 CAL_DOC=docs/multiwan-link-calibration.md
+VERIFY_DOC=docs/multiwan-verification.md
 
-for file in "$CONFIG" "$MANAGER" "$ROUTE_CACHE" "$CALIBRATE" "$USB_UI" "$CAL_UI" "$USB_CARD" "$CAL_CARD" "$TARGET_PATCH" "$USB_DOC" "$CAL_DOC" docs/README.md Makefile; do
+for file in "$CONFIG" "$MANAGER" "$ROUTE_CACHE" "$CALIBRATE" "$USB_UI" "$CAL_UI" "$USB_CARD" "$CAL_CARD" "$TARGET_PATCH" "$USB_DOC" "$CAL_DOC" "$VERIFY_DOC" docs/README.md Makefile; do
     require_file "$file"
 done
 
@@ -97,11 +92,14 @@ require_text "$MANAGER" "case \"\$selected\" in wan|wan2|wan3)"
 require_text "$MANAGER" "json_add_string name wan3"
 require_text "$MANAGER" "json_add_string proto dhcp"
 require_text "$MANAGER" "json_add_string zone wan"
+require_text "$MANAGER" "json_add_boolean peerdns 1"
+require_text "$MANAGER" "json_add_int dns_metric 1"
 require_text "$MANAGER" "json_add_string ip4table 103"
 require_text "$MANAGER" "type = http-connect;"
 require_text "$MANAGER" "local_ip = 0.0.0.0;"
 require_text "$MANAGER" "table inet \$NFT_TABLE"
 require_text "$MANAGER" "ip daddr \$proxy_host return"
+require_text "$MANAGER" "udp dport 443 reject"
 require_text "$MANAGER" "metric 1 onlink proto static"
 require_text "$MANAGER" "fallback_to_wan"
 require_text "$MANAGER" "MANAGER_LOCK=\"\$STATE_DIR/.manager.lock\""
@@ -143,7 +141,7 @@ require_text "$TARGET_PATCH" "kmod-usb-net-cdc-ether"
 require_text "$TARGET_PATCH" "kmod-usb-net-cdc-ncm"
 require_text "$TARGET_PATCH" "redsocks"
 
-# Documentation must expose the exact defaults, limitations and source map.
+# Documentation must expose exact defaults, limitations, open work, and maps.
 require_text "$USB_DOC" "Address: 192.168.49.1"
 require_text "$USB_DOC" "Port:    8000"
 require_text "$USB_DOC" "HTTP CONNECT"
@@ -152,11 +150,13 @@ require_text "$USB_DOC" "does **not yet create the physical or VLAN definition f
 require_text "$USB_DOC" "WireGuard uses UDP"
 require_text "$USB_DOC" "Code-to-document verification map"
 require_text "$USB_DOC" "files/usr/local/bin/wan3-manager"
-require_text "$USB_DOC" "tests/verify-multiwan.sh"
 require_text "$CAL_DOC" "does **not yet automatically switch WANs based on the result**"
 require_text "$CAL_DOC" "wan3"
 require_text "$CAL_DOC" "at most about 41 MiB"
-require_text docs/README.md "Multi-WAN USB WAN and PdaNet setup"
+require_text "$VERIFY_DOC" "tests/verify-multiwan.sh"
+require_text "$VERIFY_DOC" "full firmware build has not yet been recorded"
+require_text "$VERIFY_DOC" "physical tests have not yet been recorded"
+require_text docs/README.md "Multi-WAN implementation verification"
 
 # If an OpenWrt 25.12.5 tree is present, also verify the device patch applies.
 if [ -f openwrt/target/linux/ipq40xx/image/mikrotik.mk ] && [ -f openwrt/target/linux/ath79/image/mikrotik.mk ]; then
