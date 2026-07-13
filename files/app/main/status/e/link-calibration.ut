@@ -1,0 +1,216 @@
+{%
+/*
+ * Part of AREDN® -- Used for creating Amateur Radio Emergency Data Networks
+ * Copyright (C) 2026 AREDN contributors
+ * See Contributors file for additional contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3.
+ */
+function readCalibration(path)
+{
+    const value = fs.readfile(path);
+    if (!value) {
+        return null;
+    }
+    try {
+        return json(value);
+    }
+    catch (_) {
+        return null;
+    }
+}
+
+const calibrationBoards = {
+    "mikrotik,routerboard-952ui-5ac2nd": true,
+    "mikrotik,hap-ac2": true,
+    "mikrotik,hap-ac3": true
+};
+
+if (!auth.isAdmin) {
+    response.statusCode = 403;
+    print("Administrator authentication required");
+    return;
+}
+if (!calibrationBoards[hardware.getBoardModel().id]) {
+    response.statusCode = 404;
+    print("Link calibration is not available on this device");
+    return;
+}
+
+const allowedInterfaces = {
+    wan: "WAN 1",
+    wan2: "WAN 2"
+};
+const calibrationProvider = uciMesh.get("aredn", "multiwan", "calibration_provider") || "Hayward Internet Exchange CDN";
+const calibrationHost = uciMesh.get("aredn", "multiwan", "calibration_host") || "";
+const calibrationUrl = uciMesh.get("aredn", "multiwan", "calibration_url") || "";
+const calibrationConfigured = !!match(calibrationHost, /^[A-Za-z0-9.-]+$/) && index(calibrationUrl, `https://${calibrationHost}/`) === 0;
+
+let networkDump = { "interface": [] };
+try {
+    networkDump = ubus.call("network.interface", "dump") || networkDump;
+}
+catch (_) {
+}
+
+function interfaceState(name)
+{
+    const interfaces = networkDump.interface || [];
+    for (let i = 0; i < length(interfaces); i++) {
+        if (interfaces[i].interface === name) {
+            const state = interfaces[i];
+            const addresses = state["ipv4-address"] || [];
+            const routes = state.route || [];
+            let gateway = "";
+            for (let r = 0; r < length(routes); r++) {
+                if (routes[r].target === "0.0.0.0" && int(routes[r].mask || 0) === 0) {
+                    gateway = routes[r].nexthop || "";
+                    break;
+                }
+            }
+            return {
+                configured: true,
+                up: state.up === true,
+                device: state.l3_device || state.device || "",
+                address: length(addresses) > 0 ? addresses[0].address : "",
+                gateway: gateway
+            };
+        }
+    }
+    return { configured: false, up: false, device: "", address: "", gateway: "" };
+}
+
+let requestMessage = "";
+let requestError = "";
+let calibrationRequested = false;
+const lockPath = "/tmp/wan-calibration/.lock";
+
+if (request.env.REQUEST_METHOD === "PUT") {
+    const selected = request.args.interface || "";
+    if (request.args.action !== "calibrate" || !allowedInterfaces[selected]) {
+        requestError = "Invalid calibration request";
+    }
+    else if (!calibrationConfigured) {
+        requestError = "The Hayward CDN endpoint has not been configured in this image";
+    }
+    else if (fs.access(lockPath)) {
+        requestError = "Another link calibration is already running";
+    }
+    else {
+        const state = interfaceState(selected);
+        if (!state.configured || !state.up || state.address === "") {
+            requestError = `${allowedInterfaces[selected]} is not ready for calibration`;
+        }
+        else if (system(`/bin/sh /usr/local/bin/wan-calibrate ${selected} >/dev/null 2>&1 &`) !== 0) {
+            requestError = "Could not start the calibration process";
+        }
+        else {
+            requestMessage = `${allowedInterfaces[selected]} calibration requested`;
+            calibrationRequested = true;
+        }
+    }
+}
+
+const links = [];
+for (let name in allowedInterfaces) {
+    const state = interfaceState(name);
+    const status = readCalibration(`/tmp/wan-calibration/${name}.status.json`);
+    const result = readCalibration(`/tmp/wan-calibration/${name}.result.json`);
+    let stale = false;
+    if (result && state.configured) {
+        stale = result.source !== state.address || (result.gateway !== "-" && state.gateway !== "" && result.gateway !== state.gateway);
+    }
+    push(links, {
+        name: name,
+        label: allowedInterfaces[name],
+        state: state,
+        status: status,
+        result: result,
+        stale: stale
+    });
+}
+const calibrationRunning = calibrationRequested || !!fs.access(lockPath);
+%}
+<div class="dialog">
+    {{_R("dialog-header", "WAN Link Calibration")}}
+    <div id="link-calibration-state"
+         hx-get="{{request.env.REQUEST_URI}}"
+         hx-trigger="{{calibrationRunning ? "every 2s [document.visibilityState === 'visible']" : ""}}"
+         hx-select="#link-calibration-state"
+         hx-target="this"
+         hx-swap="outerHTML">
+        {% if (requestError !== "") { %}
+        <div><b>{{requestError}}</b></div>
+        <hr>
+        {% } else if (requestMessage !== "") { %}
+        <div>{{requestMessage}}</div>
+        <hr>
+        {% } %}
+        <div class="cols">
+            <div>
+                <div class="o">Calibration CDN</div>
+                <div class="m">{{calibrationProvider}}</div>
+            </div>
+            <div style="flex:0;white-space:nowrap">
+                {{calibrationConfigured ? calibrationHost : "not configured"}}
+            </div>
+        </div>
+        {{_H("The calibration destination is fixed in the firmware configuration. The browser request cannot supply or override a URL.")}}
+        <hr>
+        {% for (let i = 0; i < length(links); i++) {
+            const link = links[i];
+            const state = link.state;
+            const status = link.status;
+            const result = link.result;
+            const running = status?.status === "running";
+            const disabled = !calibrationConfigured || !state.configured || !state.up || state.address === "" || calibrationRunning;
+        %}
+        <div class="cols">
+            <div>
+                <div class="o">{{link.label}}</div>
+                {% if (state.configured) { %}
+                <div class="m">{{link.name}} · {{state.device || "no device"}} · {{state.address || "no IPv4 address"}}</div>
+                {% } else { %}
+                <div class="m">{{link.name}} is not configured</div>
+                {% } %}
+            </div>
+            <div style="flex:0;text-align:right;white-space:nowrap">
+                {% if (running) { %}
+                <div>{{status.stage || "starting"}}</div>
+                <div class="m">calibrating</div>
+                {% } else if (result?.status === "complete") { %}
+                <div>{{sprintf("%.2f", result.mbps)}} Mbps · {{result.bin}}{{link.stale ? " · stale" : ""}}</div>
+                <div class="m">{{result.time}} · {{result.bytes}} bytes</div>
+                {% } else if (status?.message) { %}
+                <div>{{status.message}}</div>
+                {% if (status.retry_after > 0) { %}<div class="m">retry in {{status.retry_after}} seconds</div>{% } %}
+                {% } else { %}
+                <div>not calibrated</div>
+                {% } %}
+            </div>
+            <div style="flex:0">
+                <button hx-put="{{request.env.REQUEST_URI}}"
+                        hx-target="#ctrl-modal"
+                        hx-swap="innerHTML"
+                        hx-vals='{"action":"calibrate","interface":"{{link.name}}"}'
+                        {{disabled ? "disabled" : ""}}>Calibrate</button>
+            </div>
+        </div>
+        {% if (i + 1 < length(links)) { %}<hr>{% } %}
+        {% } %}
+        {{_H("Calibration is a user-initiated data transfer. It downloads progressively larger byte ranges from the Hayward CDN, using about 1 MiB for a slow link and at most 41 MiB for a fast link. Results are grouped as low (5 Mbps or less), medium (over 5 through 30 Mbps), or fast (over 30 Mbps).")}}
+    </div>
+    {{_R("dialog-footer", "nocancel")}}
+    <script>
+    (function(){
+        {{_R("open")}}
+        htmx.on("#dialog-done", "click", _ => {
+            htmx.ajax("GET", "/a/u-link-calibration", {
+                target: "#link-calibration",
+                swap: "outerHTML"
+            });
+        });
+    })();
+    </script>
+</div>
