@@ -1,0 +1,31 @@
+--- a/target/linux/ipq40xx/image/mikrotik.mk
++++ b/target/linux/ipq40xx/image/mikrotik.mk
+@@ -39,6 +39,8 @@ define Device/mikrotik_hap-ac2
+ 	DEVICE_MODEL := hAP ac2
+ 	SOC := qcom-ipq4018
+ 	DEVICE_PACKAGES := -kmod-ath10k-ct kmod-ath10k-ct-smallbuffers
++	DEVICE_PACKAGES += kmod-usb-net-rndis kmod-usb-net-cdc-ether \
++		kmod-usb-net-cdc-ncm redsocks
+ endef
+ TARGET_DEVICES += mikrotik_hap-ac2
+ 
+@@ -50,6 +52,8 @@ define Device/mikrotik_hap-ac3
+ 	PAGESIZE := 2048
+ 	KERNEL_UBIFS_OPTS = -m $$(PAGESIZE) -e 124KiB -c $$(PAGESIZE) -x none
+ 	DEVICE_PACKAGES := kmod-ledtrig-gpio
++	DEVICE_PACKAGES += kmod-usb-net-rndis kmod-usb-net-cdc-ether \
++		kmod-usb-net-cdc-ncm redsocks
+ endef
+ TARGET_DEVICES += mikrotik_hap-ac3
+ 
+--- a/target/linux/ath79/image/mikrotik.mk
++++ b/target/linux/ath79/image/mikrotik.mk
+@@ -124,7 +124,9 @@ define Device/mikrotik_routerboard-952ui-5ac2nd
+   SOC := qca9533
+   DEVICE_MODEL := RouterBOARD 952Ui-5ac2nD (hAP ac lite)
+   DEVICE_PACKAGES += kmod-ath10k-ct-smallbuffers ath10k-firmware-qca9887-ct
++  DEVICE_PACKAGES += kmod-usb2 kmod-usb-net-rndis kmod-usb-net-cdc-ether \
++	kmod-usb-net-cdc-ncm redsocks
+   IMAGE_SIZE := 16256k
+   SUPPORTED_DEVICES += rb-952ui-5ac2nd
+ endef
