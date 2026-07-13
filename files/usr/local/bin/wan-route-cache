@@ -36,7 +36,9 @@ cache_one()
     valid_ipv4 "$source" || return 0
 
     if valid_ipv4 "$gateway"; then
-        ip -4 route replace table "$table" default via "$gateway" dev "$device" src "$source" metric 10 proto static >/dev/null 2>&1 || true
+        # The connected subnet may live in netifd's main table while this
+        # cached default lives in a private table, so mark the gateway on-link.
+        ip -4 route replace table "$table" default via "$gateway" dev "$device" src "$source" metric 10 onlink proto static >/dev/null 2>&1 || true
     else
         ip -4 route replace table "$table" default dev "$device" src "$source" metric 10 proto static >/dev/null 2>&1 || true
     fi
