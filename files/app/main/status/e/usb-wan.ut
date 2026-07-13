@@ -1,0 +1,130 @@
+{%
+/*
+ * Part of AREDN® -- Used for creating Amateur Radio Emergency Data Networks
+ * Copyright (C) 2026 AREDN contributors
+ * See Contributors file for additional contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3.
+ */
+const supportedBoards = {
+    "mikrotik,routerboard-952ui-5ac2nd": true,
+    "mikrotik,hap-ac2": true,
+    "mikrotik,hap-ac3": true
+};
+
+if (!auth.isAdmin) {
+    response.statusCode = 403;
+    print("Administrator authentication required");
+    return;
+}
+if (!supportedBoards[hardware.getBoardModel().id]) {
+    response.statusCode = 404;
+    print("USB WAN is not available on this device");
+    return;
+}
+
+function readState()
+{
+    const value = fs.readfile("/tmp/wan3/state.json");
+    if (!value) return null;
+    try { return json(value); } catch (_) { return null; }
+}
+
+function validText(value, maxlen)
+{
+    return length(value || "") <= maxlen && !match(value || "", /[\r\n]/);
+}
+
+let message = "";
+let error = "";
+if (request.env.REQUEST_METHOD === "PUT") {
+    const action = request.args.action || "";
+    if (action === "save") {
+        const enabled = request.args.wan3_enable === "on" ? "1" : "0";
+        const proxyEnabled = request.args.proxy_enable === "on" ? "1" : "0";
+        const device = request.args.wan3_device || "auto";
+        const proxyHost = request.args.proxy_host || "192.168.49.1";
+        const proxyPort = int(request.args.proxy_port || 8000);
+        const proxyUser = request.args.proxy_username || "";
+        const proxyPassword = request.args.proxy_password || "";
+
+        if (device !== "auto" && !match(device, /^[A-Za-z0-9_.:-]+$/)) error = "USB interface must be 'auto' or a valid Linux interface name";
+        else if (!match(proxyHost, constants.reIP)) error = "Proxy address must be an IPv4 address";
+        else if (proxyPort < 1 || proxyPort > 65535) error = "Proxy port must be between 1 and 65535";
+        else if (!validText(proxyUser, 128) || !validText(proxyPassword, 256)) error = "Proxy credentials contain unsupported characters or are too long";
+        else {
+            uciMesh.set("aredn", "multiwan", "wan3_enable", enabled);
+            uciMesh.set("aredn", "multiwan", "wan3_device", device);
+            uciMesh.set("aredn", "multiwan", "wan3_proxy_enable", proxyEnabled);
+            uciMesh.set("aredn", "multiwan", "wan3_proxy_host", proxyHost);
+            uciMesh.set("aredn", "multiwan", "wan3_proxy_port", proxyPort);
+            uciMesh.set("aredn", "multiwan", "wan3_proxy_username", proxyUser);
+            if (proxyPassword !== "") uciMesh.set("aredn", "multiwan", "wan3_proxy_password", proxyPassword);
+            else if (request.args.proxy_password_clear === "on") uciMesh.set("aredn", "multiwan", "wan3_proxy_password", "");
+            if (enabled === "1") uciMesh.set("aredn", "multiwan", "enabled", "1");
+            uciMesh.commit("aredn");
+            system("/usr/local/bin/wan3-manager apply >/dev/null 2>&1 &");
+            message = enabled === "1" ? "USB WAN settings saved; device discovery is running" : "USB WAN disabled";
+        }
+    }
+    else if (action === "activate") {
+        uciMesh.set("aredn", "multiwan", "enabled", "1");
+        uciMesh.set("aredn", "multiwan", "wan3_enable", "1");
+        uciMesh.set("aredn", "multiwan", "active", "wan3");
+        uciMesh.commit("aredn");
+        if (system("/usr/local/bin/wan3-manager apply >/dev/null 2>&1; /usr/local/bin/wan3-manager select wan3 >/dev/null 2>&1") === 0) message = "USB WAN selected as the active Internet path";
+        else error = "USB WAN is not ready; verify the cable, PdaNet, DHCP, and proxy settings";
+    }
+    else if (action === "fallback") {
+        uciMesh.set("aredn", "multiwan", "active", "wan");
+        uciMesh.commit("aredn");
+        if (system("/usr/local/bin/wan3-manager select wan >/dev/null 2>&1") === 0) message = "WAN 1 selected as the active Internet path";
+        else error = "WAN 1 is not ready";
+    }
+    else error = "Invalid USB WAN action";
+}
+
+const enabled = uciMesh.get("aredn", "multiwan", "wan3_enable") === "1";
+const active = uciMesh.get("aredn", "multiwan", "active") || "wan";
+const deviceSetting = uciMesh.get("aredn", "multiwan", "wan3_device") || "auto";
+const proxyEnabled = uciMesh.get("aredn", "multiwan", "wan3_proxy_enable") !== "0";
+const proxyHost = uciMesh.get("aredn", "multiwan", "wan3_proxy_host") || "192.168.49.1";
+const proxyPort = uciMesh.get("aredn", "multiwan", "wan3_proxy_port") || "8000";
+const proxyUser = uciMesh.get("aredn", "multiwan", "wan3_proxy_username") || "";
+const haveProxyPassword = !!uciMesh.get("aredn", "multiwan", "wan3_proxy_password");
+const managerState = readState();
+let interfaceState = null;
+try { interfaceState = ubus.call("network.interface.wan3", "status"); } catch (_) {}
+const addresses = (interfaceState && interfaceState["ipv4-address"]) || [];
+const address = length(addresses) ? addresses[0].address : "";
+const l3device = interfaceState?.l3_device || interfaceState?.device || managerState?.device || "";
+const interfaceUp = interfaceState?.up === true;
+const proxyRunning = !!fs.access("/var/run/wan3-redsocks.pid");
+%}
+<div class="dialog">
+    {{_R("dialog-header", "USB WAN / PdaNet")}}
+    <div id="usb-wan-dialog-state">
+        {% if (error !== "") { %}<div><b>{{error}}</b></div><hr>{% } %}
+        {% if (message !== "") { %}<div>{{message}}</div><hr>{% } %}
+        <div class="cols"><div><div class="o">Runtime status</div><div class="m">{{managerState?.message || (enabled ? "waiting for status" : "disabled")}}</div></div><div style="flex:0;text-align:right;white-space:nowrap"><div>{{interfaceUp ? "up" : "down"}}{{l3device ? " · " + l3device : ""}}</div><div class="m">{{address || "no IPv4 address"}}</div></div></div>
+        <div class="cols"><div><div class="o">Current default</div><div class="m">Selected multi-WAN path</div></div><div style="flex:0">{{active}}</div></div>
+        <div class="cols"><div><div class="o">Transparent proxy</div><div class="m">TCP through HTTP CONNECT; UDP is not proxied</div></div><div style="flex:0">{{proxyRunning ? "running" : proxyEnabled ? "stopped" : "disabled"}}</div></div>
+        <hr>
+        <form id="usb-wan-form">
+            <div class="cols"><div><div class="o">Enable USB WAN</div><div class="m">Create logical interface wan3 when a USB network device is present</div></div><div style="flex:0"><input type="checkbox" name="wan3_enable" {{enabled ? "checked" : ""}}></div></div>
+            <div class="cols"><div><div class="o">USB interface</div><div class="m">Use auto for RNDIS/CDC detection, or enter a specific interface</div></div><div style="flex:0"><input name="wan3_device" type="text" size="16" pattern="auto|[A-Za-z0-9_.:-]+" value="{{deviceSetting}}" required></div></div>
+            <hr>
+            <div class="cols"><div><div class="o">Use upstream proxy</div><div class="m">Required by PdaNet USB mode on many Android phones</div></div><div style="flex:0"><input type="checkbox" name="proxy_enable" {{proxyEnabled ? "checked" : ""}}></div></div>
+            <div class="cols"><div><div class="o">Proxy IPv4 address</div><div class="m">PdaNet commonly uses 192.168.49.1</div></div><div style="flex:0"><input name="proxy_host" type="text" size="16" pattern="{{constants.patIP}}" value="{{proxyHost}}" required></div></div>
+            <div class="cols"><div><div class="o">Proxy port</div><div class="m">PdaNet commonly uses TCP port 8000</div></div><div style="flex:0"><input name="proxy_port" type="number" min="1" max="65535" value="{{proxyPort}}" required></div></div>
+            <div class="cols"><div><div class="o">Proxy username</div><div class="m">Leave blank unless the upstream proxy requires authentication</div></div><div style="flex:0"><input name="proxy_username" type="text" size="20" maxlength="128" value="{{proxyUser}}"></div></div>
+            <div class="cols"><div><div class="o">Proxy password</div><div class="m">Leave blank to keep {{haveProxyPassword ? "the saved password" : "no password"}}</div></div><div style="flex:0"><input name="proxy_password" type="password" size="20" maxlength="256" autocomplete="new-password"></div></div>
+            {% if (haveProxyPassword) { %}<div class="cols"><div><div class="o">Clear saved password</div></div><div style="flex:0"><input type="checkbox" name="proxy_password_clear"></div></div>{% } %}
+        </form>
+        {{_H("PdaNet USB mode normally exposes an HTTP CONNECT proxy at 192.168.49.1:8000. When enabled, AREDN runs redsocks and transparently redirects public IPv4 TCP sessions from local clients. Local mesh, LAN, private, and 44Net destinations are excluded. UDP cannot use an HTTP CONNECT proxy; UDP/443 is rejected while USB WAN is active so browsers fall back from QUIC/HTTP3 to TCP/HTTPS.")}}
+        <div class="cols"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#usb-wan-form" hx-vals='{"action":"save"}'>Save USB WAN</button><div style="flex:1"></div><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"fallback"}'>Use WAN 1</button><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"activate"}' {{!enabled || !interfaceUp ? "disabled" : ""}}>Use USB WAN now</button></div>
+    </div>
+    {{_R("dialog-footer", "nocancel")}}
+    <script>(function(){ {{_R("open")}} htmx.on("#dialog-done", "click", _ => { htmx.ajax("GET", "/a/u-usb-wan", { target: "#usb-wan", swap: "outerHTML" }); htmx.ajax("GET", "/a/u-link-calibration", { target: "#link-calibration", swap: "outerHTML" }); }); })();</script>
+</div>
