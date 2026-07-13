@@ -3,4 +3,5 @@
 # generic package instance so it cannot occupy the private listener first.
 /etc/init.d/redsocks disable >/dev/null 2>&1 || true
 /etc/init.d/redsocks stop >/dev/null 2>&1 || true
+/etc/init.d/wan3-manager enable >/dev/null 2>&1 || true
 exit 0
