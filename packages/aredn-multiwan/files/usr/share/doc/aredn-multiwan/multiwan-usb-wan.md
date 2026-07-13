@@ -29,14 +29,16 @@ apk add aredn-multiwan
 A local development build normally produces an artifact below:
 
 ```text
-openwrt/bin/packages/<architecture>/arednlocal/aredn-multiwan-0.1.0-r1.apk
+openwrt/bin/packages/<architecture>/arednlocal/aredn-multiwan-0.1.0-r2.apk
 ```
 
 For a local file, use the APK command appropriate to the development image, for example:
 
 ```sh
-apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0-r1.apk
+apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0-r2.apk
 ```
+
+Check free overlay space before installing, especially on the hAP ac lite. The APK pulls USB networking modules and redsocks as dependencies; installation should fail cleanly rather than be forced when the node does not have enough storage.
 
 The package installs an administrator-only application icon named `aredn-multiwan`. Select it from the AREDN application bar to open `/a/multiwan`.
 
@@ -75,6 +77,7 @@ Package dependencies pull in:
 - RNDIS USB networking
 - CDC Ethernet
 - CDC NCM
+- the USB 2 host module on the hAP ac lite target
 - `redsocks`
 - nftables NAT support
 - curl and the system CA bundle
@@ -119,12 +122,13 @@ PdaNet USB mode commonly exposes an HTTP CONNECT proxy instead of a complete rou
 
 When `wan3` is selected and proxy mode is enabled:
 
-1. `wan3-manager` starts a private redsocks process from a generated configuration.
-2. nftables redirects public IPv4 TCP sessions from local AREDN clients to redsocks.
-3. Redsocks creates HTTP CONNECT tunnels through the configured phone proxy.
-4. The proxy endpoint itself is excluded so the redsocks connection is not redirected recursively.
-5. LAN, mesh, private, carrier-grade NAT, multicast, reserved, and 44Net destinations are excluded.
-6. Public UDP port 443 is rejected so browsers normally fall back from QUIC/HTTP/3 to TCP/HTTPS.
+1. `wan3-manager` starts a private redsocks process from a generated configuration, using a private listener on TCP port `12346` by default.
+2. The package does not disable or reuse the stock redsocks service; it uses its own configuration and PID file.
+3. nftables redirects public IPv4 TCP sessions from local AREDN clients to the package's redsocks listener.
+4. Redsocks creates HTTP CONNECT tunnels through the configured phone proxy.
+5. The proxy endpoint itself is excluded so the redsocks connection is not redirected recursively.
+6. LAN, mesh, private, carrier-grade NAT, multicast, reserved, and 44Net destinations are excluded.
+7. Public UDP port 443 is rejected so browsers normally fall back from QUIC/HTTP/3 to TCP/HTTPS.
 
 Important limitations:
 
