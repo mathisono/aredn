@@ -421,10 +421,19 @@ fallback_to_wan()
 
 apply()
 {
-    if [ "$(uci_get enabled)" != 1 ] || [ "$(uci_get wan3_enable)" != 1 ]; then
-        if [ "$(uci_get active)" = wan3 ]; then
-            fallback_to_wan || true
-        fi
+    active="$(uci_get active)"
+    [ -n "$active" ] || active=wan
+
+    if [ "$(uci_get enabled)" != 1 ]; then
+        [ "$active" = wan ] || fallback_to_wan || true
+        remove_dynamic
+        stop_proxy
+        write_state disabled "" "Multi-WAN is disabled"
+        return 0
+    fi
+
+    if [ "$(uci_get wan3_enable)" != 1 ]; then
+        [ "$active" = wan3 ] && fallback_to_wan || true
         remove_dynamic
         stop_proxy
         write_state disabled "" "USB WAN is disabled"
@@ -432,7 +441,7 @@ apply()
     fi
 
     device="$(detect_device)" || {
-        if [ "$(uci_get active)" = wan3 ]; then
+        if [ "$active" = wan3 ]; then
             fallback_to_wan || true
         fi
         remove_dynamic
@@ -447,8 +456,6 @@ apply()
     }
     write_state configuring "$device" "wan3 is requesting an address"
 
-    active="$(uci_get active)"
-    [ -n "$active" ] || active=wan
     if [ "$active" = wan3 ]; then
         select_wan wan3 0 >/dev/null 2>&1 || true
     else
@@ -458,12 +465,12 @@ apply()
 
 remove_all()
 {
-    if [ "$(uci_get active)" = wan3 ]; then
-        fallback_to_wan || true
-    fi
+    active="$(uci_get active)"
+    [ -n "$active" ] || active=wan
+    [ "$active" = wan ] || fallback_to_wan || true
     remove_dynamic
     stop_proxy
-    write_state disabled "" "USB WAN is stopped"
+    write_state disabled "" "Multi-WAN is stopped"
 }
 
 route_event()
@@ -492,12 +499,12 @@ route_event()
     case "$action" in
         ifup|ifupdate|up|update)
             if ! select_wan "$active" 0 >/dev/null 2>&1; then
-                [ "$active" = wan3 ] && fallback_to_wan || true
+                [ "$active" = wan ] || fallback_to_wan || true
             fi
             ;;
         ifdown|down)
-            if [ "$active" = wan3 ]; then
-                stop_proxy
+            if [ "$active" != wan ]; then
+                [ "$active" = wan3 ] && stop_proxy
                 fallback_to_wan || true
             fi
             ;;
@@ -509,7 +516,7 @@ status()
     if [ -r "$STATE_FILE" ]; then
         cat "$STATE_FILE"
     else
-        write_state unknown "" "No USB WAN state is available"
+        write_state unknown "" "No Multi-WAN state is available"
         cat "$STATE_FILE"
     fi
 }
