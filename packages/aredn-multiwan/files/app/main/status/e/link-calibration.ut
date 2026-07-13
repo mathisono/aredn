@@ -6,6 +6,27 @@ function readCalibration(path)
     if (!value) return null;
     try { return json(value); } catch (_) { return null; }
 }
+
+function validText(value, maxlen)
+{
+    return length(value || "") <= maxlen && !match(value || "", /[\r\n]/);
+}
+
+function parseCalibrationUrl(value)
+{
+    if (!value || length(value) > 1024 || match(value, /[\t\r\n ]/)) return null;
+    const parsed = match(value, /^https:\/\/([A-Za-z0-9.-]+)\/[^#]+$/);
+    if (!parsed) return null;
+
+    const host = parsed[1];
+    if (length(host) > 253 || substr(host, 0, 1) === "." || substr(host, -1) === "." || index(host, "..") !== -1) return null;
+    const labels = split(host, ".");
+    for (let i = 0; i < length(labels); i++) {
+        if (!match(labels[i], /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/)) return null;
+    }
+    return { host: host, url: value };
+}
+
 const calibrationBoards = {
     "mikrotik,routerboard-952ui-5ac2nd": true,
     "mikrotik,hap-ac2": true,
@@ -13,13 +34,14 @@ const calibrationBoards = {
 };
 if (!auth.isAdmin) { response.statusCode = 403; print("Administrator authentication required"); return; }
 if (!calibrationBoards[hardware.getBoardModel().id]) { response.statusCode = 404; print("Link calibration is not available on this device"); return; }
+
 const allowedInterfaces = { wan: "WAN 1", wan2: "WAN 2", wan3: "USB WAN" };
-const calibrationProvider = uciMesh.get("aredn", "multiwan", "calibration_provider") || "Hurricane Electric / Hayward Internet Exchange";
-const calibrationHost = uciMesh.get("aredn", "multiwan", "calibration_host") || "";
-const calibrationUrl = uciMesh.get("aredn", "multiwan", "calibration_url") || "";
-const calibrationConfigured = !!match(calibrationHost, /^[A-Za-z0-9.-]+$/) && index(calibrationUrl, `https://${calibrationHost}/`) === 0;
+let calibrationProvider = uciMesh.get("aredn", "multiwan", "calibration_provider") || "User-selected HTTPS calibration object";
+let calibrationHost = uciMesh.get("aredn", "multiwan", "calibration_host") || "";
+let calibrationUrl = uciMesh.get("aredn", "multiwan", "calibration_url") || "";
 let networkDump = { interface: [] };
 try { networkDump = ubus.call("network.interface", "dump") || networkDump; } catch (_) {}
+
 function interfaceState(name)
 {
     const interfaces = networkDump.interface || [];
@@ -36,22 +58,67 @@ function interfaceState(name)
     }
     return { configured: false, up: false, device: "", address: "", gateway: "" };
 }
+
 let requestMessage = "";
 let requestError = "";
 let calibrationRequested = false;
 const lockPath = "/tmp/wan-calibration/.lock";
 if (request.env.REQUEST_METHOD === "PUT") {
-    const selected = request.args.interface || "";
-    if (request.args.action !== "calibrate" || !allowedInterfaces[selected]) requestError = "Invalid calibration request";
-    else if (!calibrationConfigured) requestError = "The Hayward CDN endpoint has not been configured in this image";
-    else if (fs.access(lockPath)) requestError = "Another link calibration is already running";
+    const action = request.args.action || "";
+    if (action === "save-endpoint") {
+        const provider = request.args.calibration_provider || "User-selected HTTPS calibration object";
+        const url = request.args.calibration_url || "";
+        if (!validText(provider, 128)) {
+            requestError = "Calibration label contains unsupported characters or is too long";
+        }
+        else if (url === "") {
+            uciMesh.set("aredn", "multiwan", "calibration_provider", provider);
+            uciMesh.set("aredn", "multiwan", "calibration_host", "");
+            uciMesh.set("aredn", "multiwan", "calibration_url", "");
+            uciMesh.commit("aredn");
+            calibrationProvider = provider;
+            calibrationHost = "";
+            calibrationUrl = "";
+            requestMessage = "Calibration object cleared; active calibration is disabled";
+        }
+        else {
+            const parsed = parseCalibrationUrl(url);
+            if (!parsed) {
+                requestError = "Enter a complete HTTPS URL with a DNS hostname and object path; spaces, fragments, credentials, and custom ports are not accepted";
+            }
+            else {
+                uciMesh.set("aredn", "multiwan", "calibration_provider", provider);
+                uciMesh.set("aredn", "multiwan", "calibration_host", parsed.host);
+                uciMesh.set("aredn", "multiwan", "calibration_url", parsed.url);
+                uciMesh.commit("aredn");
+                calibrationProvider = provider;
+                calibrationHost = parsed.host;
+                calibrationUrl = parsed.url;
+                requestMessage = "Calibration HTTPS object saved";
+            }
+        }
+    }
+    else if (action === "calibrate") {
+        const selected = request.args.interface || "";
+        const configuredObject = parseCalibrationUrl(calibrationUrl);
+        const calibrationConfigured = !!configuredObject && configuredObject.host === calibrationHost;
+        if (!allowedInterfaces[selected]) requestError = "Invalid calibration request";
+        else if (!calibrationConfigured) requestError = "Configure a valid HTTPS calibration object first";
+        else if (fs.access(lockPath)) requestError = "Another link calibration is already running";
+        else {
+            const state = interfaceState(selected);
+            if (!state.configured || !state.up || state.address === "") requestError = `${allowedInterfaces[selected]} is not ready for calibration`;
+            else if (system(`/bin/sh /usr/local/bin/wan-calibrate ${selected} >/dev/null 2>&1 &`) !== 0) requestError = "Could not start the calibration process";
+            else { requestMessage = `${allowedInterfaces[selected]} calibration requested`; calibrationRequested = true; }
+        }
+    }
     else {
-        const state = interfaceState(selected);
-        if (!state.configured || !state.up || state.address === "") requestError = `${allowedInterfaces[selected]} is not ready for calibration`;
-        else if (system(`/bin/sh /usr/local/bin/wan-calibrate ${selected} >/dev/null 2>&1 &`) !== 0) requestError = "Could not start the calibration process";
-        else { requestMessage = `${allowedInterfaces[selected]} calibration requested`; calibrationRequested = true; }
+        requestError = "Invalid calibration action";
     }
 }
+
+const configuredObject = parseCalibrationUrl(calibrationUrl);
+const calibrationConfigured = !!configuredObject && configuredObject.host === calibrationHost;
 const links = [];
 for (let name in allowedInterfaces) {
     const state = interfaceState(name);
@@ -66,8 +133,12 @@ const calibrationRunning = calibrationRequested || !!fs.access(lockPath);
     {{_R("dialog-header", "WAN Link Calibration")}}
     <div id="link-calibration-state" hx-get="{{request.env.REQUEST_URI}}" hx-trigger="{{calibrationRunning ? "every 2s [document.visibilityState === 'visible']" : ""}}" hx-select="#link-calibration-state" hx-target="this" hx-swap="outerHTML">
         {% if (requestError) { %}<div><b>{{requestError}}</b></div><hr>{% } else if (requestMessage) { %}<div>{{requestMessage}}</div><hr>{% } %}
-        <div class="cols"><div><div class="o">Calibration CDN</div><div class="m">{{calibrationProvider}}</div></div><div style="flex:0">{{calibrationConfigured ? calibrationHost : "not configured"}}</div></div>
-        {{_H("Only a logged-in administrator can start calibration. The destination is fixed in firmware configuration and cannot be supplied by the browser request.")}}
+        <form id="calibration-endpoint-form">
+            <div class="cols"><div><div class="o">Calibration label</div><div class="m">Descriptive name for the selected server or CDN</div></div><div style="flex:0"><input name="calibration_provider" type="text" size="34" maxlength="128" value="{{calibrationProvider}}" required></div></div>
+            <div class="cols"><div><div class="o">HTTPS calibration object</div><div class="m">A stable public object that supports HTTP byte ranges</div></div><div style="flex:0"><input name="calibration_url" type="url" size="52" maxlength="1024" placeholder="https://host.example/aredn/payload.bin" value="{{calibrationUrl}}"></div></div>
+        </form>
+        <div class="cols"><div><div class="m">{{calibrationConfigured ? "Configured host: " + calibrationHost : "No calibration object configured"}}</div></div><div style="flex:0"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#calibration-endpoint-form" hx-vals='{"action":"save-endpoint"}'>Save calibration object</button></div></div>
+        {{_H("The administrator selects and stores this HTTPS object on the node. It must return HTTP 206 for range requests and contain at least 32 MiB. A calibration-start request may select only wan, wan2, or wan3; it cannot supply or override the saved URL.")}}
         <hr>
         {% for (let i = 0; i < length(links); i++) { const link = links[i]; const state = link.state; const status = link.status; const result = link.result; const running = status?.status === "running"; const disabled = !calibrationConfigured || !state.configured || !state.up || !state.address || calibrationRunning; %}
         <div class="cols">
@@ -82,7 +153,7 @@ const calibrationRunning = calibrationRequested || !!fs.access(lockPath);
         </div>
         {% if (i + 1 < length(links)) { %}<hr>{% } %}
         {% } %}
-        {{_H("USB WAN calibration uses its configured HTTP CONNECT proxy when enabled. Progressive 1 MiB, 8 MiB and 32 MiB ranges limit data use. Results are low (5 Mbps or less), medium (over 5 through 30 Mbps), or fast (over 30 Mbps).")}}
+        {{_H("USB WAN calibration travels over the phone-to-hAP USB tether and uses the PdaNet HTTP CONNECT proxy settings when proxy mode is enabled. Progressive 1 MiB, 8 MiB and 32 MiB ranges limit data use. Results are low (5 Mbps or less), medium (over 5 through 30 Mbps), or fast (over 30 Mbps).")}}
     </div>
     {{_R("dialog-footer", "nocancel")}}
     <script>(function(){ {{_R("open")}} htmx.on("#dialog-done", "click", _ => htmx.ajax("GET", "/a/u-link-calibration", { target: "#link-calibration", swap: "outerHTML" })); })();</script>
