@@ -10,6 +10,7 @@ body{font-family:system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0
 <body>
 <h1>AREDN Multi-WAN and USB WAN</h1>
 <p>This is an experimental, optional package for the MikroTik hAP ac lite, hAP ac2, and hAP ac3. Installing it does not enable multi-WAN. The existing AREDN WAN remains unchanged until an administrator enables the package and selects another path.</p>
+<div class="note"><strong>Before installation:</strong> check free overlay space, especially on the hAP ac lite. The package installs USB network drivers, redsocks, curl, and nftables dependencies as separate APKs.</div>
 
 <h2>Interfaces</h2>
 <table><thead><tr><th>Name</th><th>Purpose</th></tr></thead><tbody>
@@ -28,6 +29,7 @@ body{font-family:system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0
 <li>Save. Wait for <code>wan3</code> to show an IPv4 address, then select <strong>Use USB WAN now</strong>.</li>
 <li>Select <strong>Use WAN 1</strong> before unplugging the phone when practical.</li>
 </ol>
+<p>The package runs a private redsocks process with its own configuration, PID file, nftables table, and TCP listener on port <code>12346</code> by default. It does not stop or disable a separately configured stock redsocks service.</p>
 <div class="note"><strong>Proxy limitation:</strong> HTTP CONNECT carries TCP. General UDP, incoming connections, and port forwarding do not work through PdaNet proxy mode. UDP/443 is rejected so browsers normally fall back from QUIC/HTTP/3 to TCP/HTTPS. A standard routed Android tether can be used with the proxy disabled.</div>
 
 <h2>Link calibration</h2>
@@ -36,11 +38,13 @@ body{font-family:system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0
 <p>Maximum transfer is about 41 MiB. Results are <strong>low</strong> at 5 Mbps or less, <strong>medium</strong> above 5 through 30 Mbps, and <strong>fast</strong> above 30 Mbps. Calibration is measurement only in this package version; it does not yet perform automatic speed-based failover.</p>
 
 <h2>Verify from an authenticated shell</h2>
-<pre>uci -c /etc/config.mesh show aredn.multiwan
+<pre>apk info -e aredn-multiwan
+uci -c /etc/config.mesh show aredn.multiwan
 /usr/local/bin/wan3-manager status
 ubus call network.interface.wan3 status
 ip -4 route show table main default
 ip -4 route show table 103
+cat /var/run/wan3-redsocks.pid
 nft list table inet aredn_wan3_proxy
 logread -e wan3-manager
 logread -e redsocks</pre>
