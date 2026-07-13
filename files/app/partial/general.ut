@@ -60,5 +60,7 @@ if (auth.isAdmin && (
 )) {
 %}
 <hr>
+{{_R("usb-wan")}}
+<hr>
 {{_R("link-calibration")}}
 {% } %}
