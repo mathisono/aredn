@@ -96,6 +96,7 @@ feeds-update: stamp-clean-feeds-updated .stamp-feeds-updated
 	cd $(OPENWRT_DIR); ./scripts/feeds install snmpd
 	cd $(OPENWRT_DIR); ./scripts/feeds install curl
 	cd $(OPENWRT_DIR); ./scripts/feeds install redsocks
+	cd $(OPENWRT_DIR); ./scripts/feeds install -p arednlocal aredn-multiwan
 	cd $(OPENWRT_DIR); ./scripts/feeds install ntpclient
 	cd $(OPENWRT_DIR); ./scripts/feeds install socat
 	cd $(OPENWRT_DIR); ./scripts/feeds install luci-lib-base

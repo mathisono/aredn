@@ -1,0 +1,21 @@
+<div id="multiwan-page" hx-get="u-multiwan" hx-trigger="every 5s [document.visibilityState === 'visible']" hx-swap="outerHTML">
+    <div class="noctrl">
+        <div class="section-title">Experimental Multi-WAN Package</div>
+        <div class="section">
+            <div class="t">WAN 1 · WAN 2 · USB WAN</div>
+            <div class="s">optional package; existing single-WAN behavior remains the default</div>
+        </div>
+    </div>
+    <hr>
+    {{_R("usb-wan")}}
+    <hr>
+    {{_R("link-calibration")}}
+    <hr>
+    <div class="noctrl">
+        <div class="section-title">Setup and limitations</div>
+        <div class="section">
+            <div class="t"><a target="_blank" href="/apps/aredn-multiwan/help.html">Open the on-node setup guide</a></div>
+            <div class="s">PdaNet defaults, route selection, calibration usage, verification, and recovery</div>
+        </div>
+    </div>
+</div>

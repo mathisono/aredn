@@ -1,9 +1,9 @@
 # Feature documentation
 
-These documents describe branch-specific features that are not yet part of an AREDN production release.
+These documents describe the experimental `aredn-multiwan` package. The package is built as an installable APK for the MikroTik hAP ac lite, hAP ac2, and hAP ac3; it is not installed in the base firmware image.
 
-- [Multi-WAN USB WAN and PdaNet setup](multiwan-usb-wan.md) — administrator setup, proxy behavior, route switching, calibration, limitations, and troubleshooting for `wan3` on the MikroTik hAP ac lite, hAP ac2, and hAP ac3.
-- [Multi-WAN link calibration](multiwan-link-calibration.md) — authentication, Hurricane Electric / Hayward CDN contract, bounded transfer sizes, proxy-aware measurement, and link classification.
-- [Multi-WAN implementation verification](multiwan-verification.md) — repository checks, prepared-tree patch verification, target build commands, hardware test cases, and the current validation boundary.
+- [Package and USB WAN setup](multiwan-usb-wan.md) — installation, PdaNet proxy settings, manual WAN selection, verification, troubleshooting, recovery, and uninstall.
+- [Link calibration](multiwan-link-calibration.md) — administrator-only measurement, Hurricane Electric/Hayward endpoint contract, transfer limits, speed bins, and current limitations.
+- [Implementation verification](multiwan-verification.md) — static checks, package build checks, and hardware test matrix.
 
-Documentation and implementation are expected to change together. The guides contain source verification maps, and `tests/verify-multiwan.sh` checks their key contracts against the committed code.
+The package source is under [`packages/aredn-multiwan`](../packages/aredn-multiwan). Run `tests/verify-multiwan.sh` after changing code, defaults, dependencies, UI fields, or documentation.

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AREDN Multi-WAN setup</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;line-height:1.5;color:#1f2937}code,pre{background:#f3f4f6;border-radius:.3rem}code{padding:.1rem .25rem}pre{padding:1rem;overflow:auto}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d1d5db;padding:.45rem;text-align:left}.note{border-left:4px solid #f59e0b;padding:.5rem 1rem;background:#fffbeb}.ok{border-left:4px solid #10b981;padding:.5rem 1rem;background:#ecfdf5}h1,h2{line-height:1.2}</style>
+</head>
+<body>
+<h1>AREDN Multi-WAN and USB WAN</h1>
+<p>This is an experimental, optional package for the MikroTik hAP ac lite, hAP ac2, and hAP ac3. Installing it does not enable multi-WAN. The existing AREDN WAN remains unchanged until an administrator enables the package and selects another path.</p>
+
+<h2>Interfaces</h2>
+<table><thead><tr><th>Name</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>wan</code></td><td>Existing AREDN WAN.</td></tr>
+<tr><td><code>wan2</code></td><td>Second Ethernet WAN when it has been configured separately.</td></tr>
+<tr><td><code>wan3</code></td><td>USB RNDIS, CDC Ethernet, or CDC NCM tethering managed by this package.</td></tr>
+</tbody></table>
+
+<h2>PdaNet USB setup</h2>
+<ol>
+<li>Use a data-capable USB cable and connect the Android phone to the hAP USB host port.</li>
+<li>Open PdaNet+ and enable <strong>Activate USB Mode</strong>. Leave PdaNet running.</li>
+<li>Log in to AREDN. Open the application menu and select <strong>aredn-multiwan</strong>.</li>
+<li>Open <strong>USB WAN</strong>, enable it, and leave the USB interface set to <code>auto</code>.</li>
+<li>Enable the upstream proxy when PdaNet requires it. Common defaults are <code>192.168.49.1</code>, TCP port <code>8000</code>, type HTTP CONNECT.</li>
+<li>Save. Wait for <code>wan3</code> to show an IPv4 address, then select <strong>Use USB WAN now</strong>.</li>
+<li>Select <strong>Use WAN 1</strong> before unplugging the phone when practical.</li>
+</ol>
+<div class="note"><strong>Proxy limitation:</strong> HTTP CONNECT carries TCP. General UDP, incoming connections, and port forwarding do not work through PdaNet proxy mode. UDP/443 is rejected so browsers normally fall back from QUIC/HTTP/3 to TCP/HTTPS. A standard routed Android tether can be used with the proxy disabled.</div>
+
+<h2>Link calibration</h2>
+<p>Only a logged-in administrator can start calibration. The browser cannot provide a test URL. The package uses the configured Hurricane Electric / Hayward Internet Exchange HTTPS object and requests bounded byte ranges:</p>
+<ul><li>1 MiB initial sample</li><li>8 MiB when the path is near or above 5 Mbps</li><li>32 MiB when the path is near or above 30 Mbps</li></ul>
+<p>Maximum transfer is about 41 MiB. Results are <strong>low</strong> at 5 Mbps or less, <strong>medium</strong> above 5 through 30 Mbps, and <strong>fast</strong> above 30 Mbps. Calibration is measurement only in this package version; it does not yet perform automatic speed-based failover.</p>
+
+<h2>Verify from an authenticated shell</h2>
+<pre>uci -c /etc/config.mesh show aredn.multiwan
+/usr/local/bin/wan3-manager status
+ubus call network.interface.wan3 status
+ip -4 route show table main default
+ip -4 route show table 103
+nft list table inet aredn_wan3_proxy
+logread -e wan3-manager
+logread -e redsocks</pre>
+<div class="ok"><strong>Healthy USB proxy state:</strong> <code>wan3</code> is up with an IPv4 address, table 103 has a default route, the main table points through the USB device when selected, a private redsocks PID exists, and the <code>aredn_wan3_proxy</code> nftables table is present.</div>
+
+<h2>Recovery and uninstall</h2>
+<pre>/usr/local/bin/wan3-manager select wan
+/etc/init.d/wan3-manager stop
+apk del aredn-multiwan</pre>
+<p>The package attempts to return to WAN 1 before removal. Saved <code>aredn.multiwan</code> settings are intentionally retained for a later reinstall. Existing sessions may not survive any WAN change.</p>
+
+<h2>Known unfinished work</h2>
+<ul>
+<li>The package can select and calibrate <code>wan2</code>, but does not yet create its physical hAP port/VLAN definition.</li>
+<li>Automatic SLA and speed-bin failover are not enabled yet.</li>
+<li>Calibration stays disabled until the exact Hayward HTTPS hostname and range-capable object are configured.</li>
+</ul>
+</body>
+</html>

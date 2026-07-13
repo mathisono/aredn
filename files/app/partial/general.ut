@@ -51,16 +51,3 @@
 {{_R("packages")}}
 <hr>
 {{_R("network")}}
-{%
-const calibrationBoard = hardware.getBoardModel().id;
-if (auth.isAdmin && (
-    calibrationBoard === "mikrotik,routerboard-952ui-5ac2nd" ||
-    calibrationBoard === "mikrotik,hap-ac2" ||
-    calibrationBoard === "mikrotik,hap-ac3"
-)) {
-%}
-<hr>
-{{_R("usb-wan")}}
-<hr>
-{{_R("link-calibration")}}
-{% } %}

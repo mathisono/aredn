@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Multi-WAN">
+  <rect x="3" y="3" width="58" height="58" rx="12" fill="#1f2937"/>
+  <path d="M14 18h16v8H14zM34 18h16v8H34zM24 38h16v8H24z" fill="#f3f4f6"/>
+  <path d="M22 26v6h10v6M42 26v6H32" fill="none" stroke="#f3f4f6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="18" cy="22" r="2" fill="#10b981"/>
+  <circle cx="38" cy="22" r="2" fill="#f59e0b"/>
+  <circle cx="28" cy="42" r="2" fill="#38bdf8"/>
+</svg>

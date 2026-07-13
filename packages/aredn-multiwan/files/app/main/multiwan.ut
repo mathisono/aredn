@@ -1,0 +1,19 @@
+{%
+/* Standalone administrator page installed by the aredn-multiwan package. */
+const supportedBoards = {
+    "mikrotik,routerboard-952ui-5ac2nd": true,
+    "mikrotik,hap-ac2": true,
+    "mikrotik,hap-ac3": true
+};
+if (!auth.isAdmin) {
+    response.statusCode = 403;
+    print("<div><b>Administrator authentication required</b></div>");
+    return;
+}
+if (!supportedBoards[hardware.getBoardModel().id]) {
+    response.statusCode = 404;
+    print("<div><b>The Multi-WAN package is not supported on this device.</b></div>");
+    return;
+}
+%}
+{{_R("multiwan-page")}}
