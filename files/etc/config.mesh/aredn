@@ -28,10 +28,21 @@ config wireless_watchdog
         option enable '1'
         option daily '03:00'
 
-# The endpoint is populated by the image/deployment configuration. It is not
-# accepted from a link-calibration HTTP request or exposed as an editable UI.
+# Multi-WAN remains opt-in. The primary AREDN WAN is unchanged until enabled.
+# The calibration endpoint is populated by image/deployment configuration and
+# is never accepted from a browser request.
 config multiwan 'multiwan'
-        option calibration_provider 'Hayward Internet Exchange CDN'
+        option enabled '0'
+        option active 'wan'
+        option wan3_enable '0'
+        option wan3_device 'auto'
+        option wan3_proxy_enable '1'
+        option wan3_proxy_host '192.168.49.1'
+        option wan3_proxy_port '8000'
+        option wan3_proxy_username ''
+        option wan3_proxy_password ''
+        option wan3_proxy_local_port '12345'
+        option calibration_provider 'Hurricane Electric / Hayward Internet Exchange'
         option calibration_host ''
         option calibration_url ''
         option calibration_cooldown '300'
