@@ -180,3 +180,10 @@ stamp-clean:
 	cd $(OPENWRT_DIR); quilt pop -a -f || [ $$? = 2 ] && true
 	rm -rf $(OPENWRT_DIR)/tmp
 	rm -f .stamp-patched
+	touch $@
+
+clean: stamp-clean .stamp-openwrt-cleaned
+
+.PHONY: openwrt-clean openwrt-update patch feeds-update prepare compile stamp-clean clean always
+.NOTPARALLEL:
+.FORCE:

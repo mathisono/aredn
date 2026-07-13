@@ -95,7 +95,7 @@ uci -c /etc/config.mesh commit aredn
 Verify the object before using the UI:
 
 ```sh
-curl --fail --location-trusted=false \
+curl --fail --max-redirs 0 \
      --range 0-1048575 \
      --output /dev/null \
      --write-out 'HTTP=%{http_code} bytes=%{size_download}\n' \
