@@ -2,47 +2,86 @@
 
 ## Purpose
 
-The `aredn-multiwan` package can measure `wan`, `wan2`, and `wan3` without using an unrestricted public speed-test service. It groups each usable path into a coarse throughput bin:
+The `aredn-multiwan` package can measure `wan`, `wan2`, and `wan3` without depending on a hard-coded public speed-test service. It groups each usable path into a coarse throughput bin:
 
 - `low`: 5 Mbps or less
 - `medium`: above 5 Mbps through 30 Mbps
 - `fast`: above 30 Mbps
 
-Calibration is currently a **manual measurement tool**. It does **not yet automatically switch WANs based on the result**. Manual route selection and hard USB-loss fallback are separate package functions.
+Calibration is currently a **manual measurement tool**. It does **not yet automatically switch WANs based on the result**. Manual route selection and hard secondary-link fallback are separate package functions.
 
-## Authentication boundary
+## Authentication and configuration boundary
 
-Calibration creates billable traffic and is therefore an administrative action.
+Calibration creates potentially billable traffic and is therefore an administrative action.
 
 - Only a logged-in AREDN administrator can see the package application and calibration controls.
 - The write handler lives below a secured `/e/` route and also explicitly checks `auth.isAdmin`.
-- `GET` reads status only.
-- A calibration starts only from an authenticated `PUT` containing the fixed action `calibrate` and one allow-listed name: `wan`, `wan2`, or `wan3`.
-- The request cannot supply a destination URL, command fragment, device path, byte count, or arbitrary interface.
+- An administrator may save or clear the persistent HTTPS calibration object from the UI.
+- `GET` reads status only and creates no calibration traffic.
+- A calibration run starts only from an authenticated `PUT` containing the fixed action `calibrate` and one allow-listed name: `wan`, `wan2`, or `wan3`.
+- A run request cannot supply or override a destination URL, command fragment, device path, byte count, or arbitrary interface.
 - A global lock prevents concurrent tests.
 - A per-interface cooldown defaults to 300 seconds.
 
-## Hurricane Electric / Hayward endpoint
+This separates two operations:
 
-The configured provider is:
+1. **Configure object:** an authenticated administrator stores one persistent HTTPS URL.
+2. **Run calibration:** an authenticated request selects only the WAN to test; the runner reads the saved URL from UCI.
+
+## User-selectable HTTPS object
+
+The package source contains no active calibration URL. In **WAN Link Calibration**, the administrator enters:
+
+- a descriptive label
+- a complete HTTPS object URL
+
+Example:
 
 ```text
-Hurricane Electric / Hayward Internet Exchange
+Label: Hurricane Electric / Hayward Internet Exchange
+URL:   https://speed.example.net/aredn/link-calibration/payload.bin
 ```
 
-The exact production HTTPS hostname and object path are deployment values. They are intentionally blank in the source defaults. Calibration controls remain disabled until both values form a valid fixed HTTPS URL.
+Hurricane Electric/Hayward can be used when an appropriate object is available, but it is not mandatory or hard-coded. Another administrator-controlled HTTPS object may be selected.
 
-The object contract is:
+The handler derives the hostname from the URL and stores:
 
-- HTTPS with normal system CA validation
-- stable hostname and path
+```text
+aredn.multiwan.calibration_provider
+aredn.multiwan.calibration_host
+aredn.multiwan.calibration_url
+aredn.multiwan.calibration_cooldown
+```
+
+Saving a blank URL clears the saved host and URL and disables calibration.
+
+### Accepted URL form
+
+The UI accepts a URL shaped like:
+
+```text
+https://dns-hostname/object/path
+```
+
+The current implementation requires:
+
+- standard HTTPS with normal system CA validation
+- a DNS-style hostname and a non-empty object path
+- no embedded username or password
+- no whitespace
+- no URL fragment
+- no custom port
 - no redirects
-- HTTP byte-range support
-- `206 Partial Content` for each request
-- accurate downloaded byte count
-- an object large enough for a 32 MiB range
 
-The browser cannot override the endpoint. The runner rejects an endpoint whose URL does not begin with the configured HTTPS hostname.
+The object itself must:
+
+- support HTTP byte ranges
+- return `206 Partial Content`
+- return the exact requested byte count
+- be at least 32 MiB
+- be stable enough for repeated test comparisons
+
+The runner independently validates the stored hostname and URL before opening a connection. This protects against malformed values inserted directly through UCI as well as malformed UI submissions.
 
 ## Progressive transfer
 
@@ -64,14 +103,16 @@ Each accepted result records:
 - measured Mbps
 - low/medium/fast bin
 - remote address
-- configured provider and CDN hostname
+- configured label and hostname
 - whether the `wan3` upstream proxy was used
 
 A result is shown as stale when the current interface address or gateway no longer matches the saved measurement.
 
 ## PdaNet and `wan3`
 
-When `wan3_proxy_enable=1`, calibration does not depend on the transparent nftables redirect. Curl is given the configured PdaNet HTTP proxy directly while remaining bound to the `wan3` source address.
+`wan3` is the network path created from the Android phone's USB RNDIS/CDC tether into the hAP. The hAP obtains an IPv4 address on this USB network before it can reach the PdaNet proxy.
+
+When `wan3_proxy_enable=1`, calibration does not depend on the transparent nftables redirect. Curl is given the configured PdaNet HTTP CONNECT proxy directly while remaining bound to the `wan3` source address.
 
 Common PdaNet values are:
 
@@ -80,26 +121,27 @@ Proxy: 192.168.49.1:8000
 Type:  HTTP CONNECT
 ```
 
-Optional proxy credentials are read from persistent AREDN configuration and never accepted from the calibration request.
+Optional proxy credentials are read from persistent AREDN configuration and never accepted from the calibration-run request.
 
-## Configure a development endpoint
+## Configure and verify an object
 
-After an approved range-capable object exists:
+Use the package UI for normal configuration. For development, the equivalent UCI values are:
 
 ```sh
-uci -c /etc/config.mesh set aredn.multiwan.calibration_host='EXACT.HAYWARD.HOSTNAME'
-uci -c /etc/config.mesh set aredn.multiwan.calibration_url='https://EXACT.HAYWARD.HOSTNAME/aredn/link-calibration/v1/payload.bin'
+uci -c /etc/config.mesh set aredn.multiwan.calibration_provider='My calibration server'
+uci -c /etc/config.mesh set aredn.multiwan.calibration_host='speed.example.net'
+uci -c /etc/config.mesh set aredn.multiwan.calibration_url='https://speed.example.net/aredn/link-calibration/payload.bin'
 uci -c /etc/config.mesh commit aredn
 ```
 
-Verify the object before using the UI:
+Verify the object before running a full calibration:
 
 ```sh
 curl --fail --max-redirs 0 \
      --range 0-1048575 \
      --output /dev/null \
      --write-out 'HTTP=%{http_code} bytes=%{size_download}\n' \
-     'https://EXACT.HAYWARD.HOSTNAME/aredn/link-calibration/v1/payload.bin'
+     'https://speed.example.net/aredn/link-calibration/payload.bin'
 ```
 
 Expected values are HTTP `206` and exactly `1048576` downloaded bytes.
@@ -118,7 +160,7 @@ Status and result files are written atomically. They are runtime data and disapp
 ## Verification
 
 ```sh
-# Confirm endpoint configuration
+# Confirm persistent object configuration
 uci -c /etc/config.mesh get aredn.multiwan.calibration_provider
 uci -c /etc/config.mesh get aredn.multiwan.calibration_host
 uci -c /etc/config.mesh get aredn.multiwan.calibration_url
@@ -128,7 +170,7 @@ uci -c /etc/config.mesh get aredn.multiwan.calibration_url
 /usr/local/bin/wan-calibrate wan2
 /usr/local/bin/wan-calibrate wan3
 
-# Inspect the result
+# Inspect results
 cat /tmp/wan-calibration/wan3.result.json
 logread -e wan-calibrate
 ```
@@ -152,7 +194,7 @@ This future automatic mode must be explicitly enabled, rate-limited, data-budget
 | Function | Package source |
 |---|---|
 | Runner and bounds | `packages/aredn-multiwan/files/usr/local/bin/wan-calibrate` |
-| Authenticated handler | `packages/aredn-multiwan/files/app/main/status/e/link-calibration.ut` |
+| Authenticated object and run handler | `packages/aredn-multiwan/files/app/main/status/e/link-calibration.ut` |
 | Status card | `packages/aredn-multiwan/files/app/partial/link-calibration.ut` |
 | Defaults | `packages/aredn-multiwan/files/etc/uci-defaults/95-aredn-multiwan` |
 | Package dependencies | `packages/aredn-multiwan/Makefile` |
