@@ -1,8 +1,10 @@
 #!/bin/sh
-# Keep the selected default route and USB proxy aligned with netifd events.
+# Cache learned gateways, then keep the selected route and USB proxy aligned
+# with netifd interface events.
 
 case "${INTERFACE:-}" in
     wan|wan2|wan3)
+        /usr/local/bin/wan-route-cache "$INTERFACE" >/dev/null 2>&1 || true
         /usr/local/bin/wan3-manager route-event "$INTERFACE" "${ACTION:-}" >/dev/null 2>&1 &
         ;;
 esac
