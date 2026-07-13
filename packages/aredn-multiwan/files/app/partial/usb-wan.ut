@@ -1,5 +1,5 @@
 {%
-/* USB WAN status card. The editor itself is protected by an /e/ route. */
+/* Phone USB tether status card. The editor itself is protected by an /e/ route. */
 function readUsbWanState()
 {
     const value = fs.readfile("/tmp/wan3/state.json");
@@ -23,11 +23,11 @@ if (auth.isAdmin && usbWanBoards[hardware.getBoardModel().id]) {
     const device = iface?.l3_device || iface?.device || state?.device || "";
 %}
 <div id="usb-wan" class="ctrl" hx-get="status/e/usb-wan" hx-target="#ctrl-modal">
-    <div class="section-title">USB WAN</div>
+    <div class="section-title">Phone USB Tether</div>
     <div class="section cols">
-        <div><div class="t">{{enabled ? iface?.up ? "up" : "waiting" : "disabled"}}</div><div class="s">wan3{{device ? " · " + device : ""}}</div></div>
-        <div><div class="t">{{address || "-"}}</div><div class="s">{{active ? "active" : "standby"}}</div></div>
-        <div><div class="t">{{proxyEnabled ? fs.access("/var/run/wan3-redsocks.pid") ? "on" : "off" : "disabled"}}</div><div class="s">PdaNet proxy</div></div>
+        <div><div class="t">{{enabled ? iface?.up ? "up" : "waiting" : "disabled"}}</div><div class="s">wan3 · USB RNDIS/CDC{{device ? " · " + device : ""}}</div></div>
+        <div><div class="t">{{address || "-"}}</div><div class="s">{{active ? "active Internet path" : "standby"}}</div></div>
+        <div><div class="t">{{proxyEnabled ? fs.access("/var/run/wan3-redsocks.pid") ? "on" : "off" : "disabled"}}</div><div class="s">hAP PdaNet proxy</div></div>
     </div>
 </div>
 {% } %}
