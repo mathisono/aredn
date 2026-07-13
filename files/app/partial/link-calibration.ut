@@ -1,0 +1,67 @@
+{%
+/*
+ * Part of AREDN® -- Used for creating Amateur Radio Emergency Data Networks
+ * Copyright (C) 2026 AREDN contributors
+ * See Contributors file for additional contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3.
+ */
+function readCalibration(path)
+{
+    const value = fs.readfile(path);
+    if (!value) {
+        return null;
+    }
+    try {
+        return json(value);
+    }
+    catch (_) {
+        return null;
+    }
+}
+
+const calibrationBoards = {
+    "mikrotik,routerboard-952ui-5ac2nd": true,
+    "mikrotik,hap-ac2": true,
+    "mikrotik,hap-ac3": true
+};
+const calibrationSupported = calibrationBoards[hardware.getBoardModel().id];
+
+if (auth.isAdmin && calibrationSupported) {
+    const links = [
+        { name: "wan", label: "WAN 1" },
+        { name: "wan2", label: "WAN 2" }
+    ];
+    for (let i = 0; i < length(links); i++) {
+        links[i].status = readCalibration(`/tmp/wan-calibration/${links[i].name}.status.json`);
+        links[i].result = readCalibration(`/tmp/wan-calibration/${links[i].name}.result.json`);
+    }
+%}
+<div id="link-calibration" class="ctrl" hx-get="status/e/link-calibration" hx-target="#ctrl-modal">
+    <div class="section-title">WAN Link Calibration</div>
+    <div class="section cols">
+    {% for (let i = 0; i < length(links); i++) {
+        const link = links[i];
+        const running = link.status?.status === "running";
+        const result = link.result;
+    %}
+        <div>
+            {% if (running) { %}
+            <div class="t">running</div>
+            <div class="s">{{link.label}} {{link.status.stage || ""}}</div>
+            {% } else if (result?.status === "complete") { %}
+            <div class="t">{{sprintf("%.1f", result.mbps)}} Mbps</div>
+            <div class="s">{{link.label}} · {{result.bin}}</div>
+            {% } else if (link.status?.message) { %}
+            <div class="t">-</div>
+            <div class="s">{{link.label}} · {{link.status.message}}</div>
+            {% } else { %}
+            <div class="t">-</div>
+            <div class="s">{{link.label}} · not calibrated</div>
+            {% } %}
+        </div>
+    {% } %}
+    </div>
+</div>
+{% } %}
