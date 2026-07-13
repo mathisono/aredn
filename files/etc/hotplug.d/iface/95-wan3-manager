@@ -1,0 +1,8 @@
+#!/bin/sh
+# Keep the selected default route and USB proxy aligned with netifd events.
+
+case "${INTERFACE:-}" in
+    wan|wan2|wan3)
+        /usr/local/bin/wan3-manager route-event "$INTERFACE" "${ACTION:-}" >/dev/null 2>&1 &
+        ;;
+esac
