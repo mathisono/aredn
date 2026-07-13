@@ -16,11 +16,13 @@ The checker verifies:
 - the local feed is registered and installed by the build
 - hAP MikroTik targets build `aredn-multiwan` with `=m`
 - runtime scripts and hooks have shell syntax and executable modes
-- package dependencies include USB networking, redsocks, curl, CA data, and nftables NAT
+- package dependencies include USB networking, the hAP ac lite USB host module, redsocks, curl, CA data, and nftables NAT
+- the package runs its own redsocks instance without disabling or reusing the stock service
 - only authenticated handlers can change settings or start calibration
 - `wan`, `wan2`, and `wan3` remain allow-listed
 - PdaNet and calibration defaults match the documentation
 - transfer sizes and speed thresholds match the documentation
+- the source guides and copies shipped inside the APK are byte-for-byte identical
 
 When a prepared OpenWrt tree exists, the checker also confirms the local feed package is visible below `openwrt/package/feeds/arednlocal/aredn-multiwan`.
 
@@ -69,6 +71,8 @@ Locate the APK:
 find openwrt/bin/packages -name 'aredn-multiwan-*.apk' -print
 ```
 
+The current development artifact is version `0.1.0-r2`.
+
 Inspect metadata and contents with the available APK tooling. Confirm that the package contains:
 
 ```text
@@ -83,6 +87,7 @@ Inspect metadata and contents with the available APK tooling. Confirm that the p
 /etc/init.d/wan3-manager
 /etc/hotplug.d/net/95-wan3-manager
 /etc/hotplug.d/iface/95-wan3-manager
+/usr/share/doc/aredn-multiwan/
 ```
 
 Confirm the base rootfs does **not** contain those files when the package is not installed.
@@ -92,21 +97,25 @@ Confirm the base rootfs does **not** contain those files when the package is not
 On each target device:
 
 1. Save a configuration backup.
-2. Install the matching architecture APK.
-3. Confirm installation succeeds only on the hAP ac lite, hAP ac2, or hAP ac3.
-4. Log out and verify the application icon is hidden.
-5. Log in and verify the `aredn-multiwan` icon appears.
-6. Open the application and confirm the package is disabled.
-7. Confirm the existing default route and ordinary WAN behavior are unchanged.
+2. Record free overlay space with `df -h /overlay` and package storage with `apk info -s` where available.
+3. Install the matching architecture APK and all dependencies.
+4. Confirm installation succeeds only on the hAP ac lite, hAP ac2, or hAP ac3.
+5. Log out and verify the application icon is hidden.
+6. Log in and verify the `aredn-multiwan` icon appears.
+7. Open the application and confirm the package is disabled.
+8. Confirm the existing default route and ordinary WAN behavior are unchanged.
+9. Confirm an independently enabled stock redsocks service, when present, was not stopped or disabled by installation.
 
 Commands:
 
 ```sh
 apk info -e aredn-multiwan
+apk info -a aredn-multiwan
 ls -l /www/cgi-bin/apps/aredn-multiwan/admin
 ls -l /app/main/multiwan.ut
 uci -c /etc/config.mesh show aredn.multiwan
 ip -4 route show table main default
+df -h /overlay
 ```
 
 ## USB test matrix
@@ -134,7 +143,10 @@ With PdaNet active:
 ubus call network.interface.wan3 status
 cat /var/run/wan3-redsocks.pid
 nft list table inet aredn_wan3_proxy
+uci -c /etc/config.mesh get aredn.multiwan.wan3_proxy_local_port
 ```
+
+The private listener defaults to TCP port `12346`. Confirm that port `12345`, commonly used by the feed package's example service, remains independent.
 
 Test TCP:
 
@@ -144,11 +156,12 @@ curl -4 --connect-timeout 15 https://example.com/ -o /dev/null -v
 
 Confirm:
 
-- public TCP is redirected through redsocks
+- public TCP is redirected through the package's redsocks process
 - the proxy endpoint is excluded from recursive redirection
 - private, mesh, LAN, CGNAT, reserved, and 44Net destinations are not redirected
 - UDP/443 is rejected only while USB proxy mode is active
 - selecting WAN 1 removes the private proxy process and nftables table
+- the stock `/etc/init.d/redsocks` enable/running state is unchanged
 
 ## Route selection test
 
@@ -181,6 +194,16 @@ Use a development range-capable HTTPS object. For each interface:
 - `wan3` uses the configured HTTP proxy directly
 - maximum total data is about 41 MiB
 
+## Upgrade test
+
+Install `0.1.0-r1` on a development node, retain its settings, and upgrade to `0.1.0-r2`. Confirm:
+
+- the package remains disabled unless the administrator previously enabled it
+- a saved old default listener value of `12345` migrates to `12346`
+- proxy credentials and the selected interface remain intact
+- the stock redsocks service is not stopped or disabled
+- the application page and runtime scripts are replaced cleanly
+
 ## Removal test
 
 With the package active on `wan3`:
@@ -193,10 +216,11 @@ Verify:
 
 - WAN 1 fallback was attempted
 - `wan3` no longer exists
-- the private redsocks process is stopped
+- the package's private redsocks process is stopped
 - `aredn_wan3_proxy` is gone
 - the application icon and page are removed
 - core AREDN pages and existing WAN files are unchanged
+- the stock redsocks service state is unchanged
 - saved `aredn.multiwan` settings remain for reinstall
 
 ## Release gate
