@@ -44,6 +44,12 @@ else
     set_default calibration_host ''
     set_default calibration_url ''
     set_default calibration_cooldown 300
+
+    # Development builds before the installable package used the feed package's
+    # example listener port. Move only that known old default to our private port.
+    if [ "$($UCI -q get aredn.multiwan.wan3_proxy_local_port 2>/dev/null)" = 12345 ]; then
+        $UCI set aredn.multiwan.wan3_proxy_local_port='12346'
+    fi
 fi
 
 $UCI commit aredn
