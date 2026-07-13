@@ -27,3 +27,11 @@ config watchdog
 config wireless_watchdog
         option enable '1'
         option daily '03:00'
+
+# The endpoint is populated by the image/deployment configuration. It is not
+# accepted from a link-calibration HTTP request or exposed as an editable UI.
+config multiwan 'multiwan'
+        option calibration_provider 'Hurricane Electric / Hayward Internet Exchange'
+        option calibration_host ''
+        option calibration_url ''
+        option calibration_cooldown '300'
