@@ -154,13 +154,14 @@ write_state()
 
 start_proxy()
 {
-    [ "$(uci_get enabled)" = 1 ] || { stop_proxy; return 0; }
-    [ "$(uci_get active)" = wan3 ] || { stop_proxy; return 0; }
-    [ "$(uci_get wan3_proxy_enable)" = 1 ] || { stop_proxy; return 0; }
+    wan_device="${1:-}"
+    [ "$(uci_get enabled)" = 1 ] || { stop_proxy; return 1; }
+    [ "$(uci_get wan3_proxy_enable)" = 1 ] || { stop_proxy; return 1; }
+    valid_device "$wan_device" || return 1
 
     command -v redsocks >/dev/null 2>&1 || {
         stop_proxy
-        write_state error "${1:-}" "redsocks is not installed"
+        write_state error "$wan_device" "redsocks is not installed"
         log "redsocks is not installed"
         return 1
     }
@@ -176,19 +177,23 @@ start_proxy()
 
     valid_ipv4 "$proxy_host" || {
         stop_proxy
-        write_state error "${1:-}" "Invalid proxy IPv4 address"
+        write_state error "$wan_device" "Invalid proxy IPv4 address"
         return 1
     }
     valid_port "$proxy_port" || {
         stop_proxy
-        write_state error "${1:-}" "Invalid proxy port"
+        write_state error "$wan_device" "Invalid proxy port"
         return 1
     }
     valid_port "$local_port" || {
         stop_proxy
-        write_state error "${1:-}" "Invalid local redirect port"
+        write_state error "$wan_device" "Invalid local redirect port"
         return 1
     }
+
+    lan_json="$(ubus call network.interface.lan status 2>/dev/null || true)"
+    lan_device="$(printf '%s' "$lan_json" | jsonfilter -e '@.l3_device' 2>/dev/null || true)"
+    valid_device "$lan_device" || lan_device=br-lan
 
     stop_proxy
 
@@ -203,7 +208,7 @@ base {
 }
 
 redsocks {
-    local_ip = 127.0.0.1;
+    local_ip = 0.0.0.0;
     local_port = $local_port;
     ip = $proxy_host;
     port = $proxy_port;
@@ -217,39 +222,66 @@ CONF
     } > "$REDSOCKS_CONF" || return 1
     chmod 600 "$REDSOCKS_CONF"
 
+    /usr/sbin/redsocks -t -c "$REDSOCKS_CONF" >/dev/null 2>&1 || {
+        write_state error "$wan_device" "Generated redsocks configuration is invalid"
+        return 1
+    }
     /usr/sbin/redsocks -c "$REDSOCKS_CONF" -p "$REDSOCKS_PID" >/dev/null 2>&1 || {
         stop_proxy
-        write_state error "${1:-}" "Could not start redsocks"
+        write_state error "$wan_device" "Could not start redsocks"
         return 1
     }
 
     nft_file="$STATE_DIR/proxy.nft"
     cat > "$nft_file" <<NFT
- table inet $NFT_TABLE {
+table inet $NFT_TABLE {
     chain prerouting {
         type nat hook prerouting priority dstnat - 10; policy accept;
-        ip saddr { 10.0.0.0/8, 44.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } ip daddr { 0.0.0.0/8, 10.0.0.0/8, 44.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4 } return
-        ip saddr { 10.0.0.0/8, 44.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } meta l4proto tcp redirect to :$local_port
+        iifname "$lan_device" ip daddr $proxy_host return
+        iifname "$lan_device" ip daddr { 0.0.0.0/8, 10.0.0.0/8, 44.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4 } return
+        iifname "$lan_device" meta l4proto tcp redirect to :$local_port
     }
-    chain forward {
+    chain output {
+        type nat hook output priority dstnat - 10; policy accept;
+        ip daddr $proxy_host return
+        ip daddr { 0.0.0.0/8, 10.0.0.0/8, 44.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4 } return
+        meta l4proto tcp redirect to :$local_port
+    }
+    chain forward_guard {
         type filter hook forward priority filter - 10; policy accept;
-        ip saddr { 10.0.0.0/8, 44.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } ip daddr != { 10.0.0.0/8, 44.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } udp dport 443 reject
+        iifname "$lan_device" ip daddr $proxy_host return
+        iifname "$lan_device" ip daddr { 0.0.0.0/8, 10.0.0.0/8, 44.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4 } return
+        iifname "$lan_device" udp dport 443 reject
     }
- }
+    chain output_guard {
+        type filter hook output priority filter - 10; policy accept;
+        ip daddr $proxy_host return
+        ip daddr { 0.0.0.0/8, 10.0.0.0/8, 44.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4 } return
+        udp dport 443 reject
+    }
+}
 NFT
     nft -f "$nft_file" >/dev/null 2>&1 || {
         stop_proxy
-        write_state error "${1:-}" "Could not install transparent proxy rules"
+        write_state error "$wan_device" "Could not install transparent proxy rules"
         return 1
     }
 
-    write_state ready "${1:-}" "USB WAN proxy is active"
-    log "transparent proxy enabled through $proxy_host:$proxy_port"
+    write_state ready "$wan_device" "USB WAN proxy is active"
+    log "transparent proxy enabled through $proxy_host:$proxy_port for $lan_device and local TCP"
 }
 
 add_dynamic()
 {
     device="$1"
+    existing="$(ubus call network.interface.wan3 status 2>/dev/null || true)"
+    existing_device="$(printf '%s' "$existing" | jsonfilter -e '@.device' 2>/dev/null || true)"
+    [ -n "$existing_device" ] || existing_device="$(printf '%s' "$existing" | jsonfilter -e '@.l3_device' 2>/dev/null || true)"
+    if [ "$existing_device" = "$device" ]; then
+        ubus call network.interface.wan3 up >/dev/null 2>&1 || true
+        return 0
+    fi
+
     remove_dynamic
 
     . /usr/share/libubox/jshn.sh
@@ -259,7 +291,8 @@ add_dynamic()
     json_add_string proto dhcp
     json_add_string zone wan
     json_add_boolean defaultroute 1
-    json_add_boolean peerdns 0
+    json_add_boolean peerdns 1
+    json_add_int dns_metric 1
     json_add_int metric 30
     json_add_string ip4table 103
     ubus call network add_dynamic "$(json_dump)" >/dev/null 2>&1 || return 1
@@ -276,17 +309,40 @@ interface_values()
     source="$(printf '%s' "$status" | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null || true)"
     valid_device "$device" || return 1
     valid_ipv4 "$source" || return 1
-    route="$(ip -4 route show table all default dev "$device" 2>/dev/null | head -n 1 || true)"
-    [ -n "$route" ] || return 1
+
+    case "$name" in
+        wan) table=101 ;;
+        wan2) table=102 ;;
+        wan3) table=103 ;;
+        *) return 1 ;;
+    esac
+    route="$(ip -4 route show table "$table" default dev "$device" 2>/dev/null | head -n 1 || true)"
     gateway="$(printf '%s\n' "$route" | sed -n 's/.* via \([^ ]*\).*/\1/p')"
+    if [ -z "$route" ]; then
+        gateway="$(printf '%s' "$status" | jsonfilter -e "@.route[@.target='0.0.0.0'].nexthop" 2>/dev/null | head -n 1 || true)"
+        [ -n "$gateway" ] || gateway="$(printf '%s' "$status" | jsonfilter -e "@.inactive.route[@.target='0.0.0.0'].nexthop" 2>/dev/null | head -n 1 || true)"
+        target="$(printf '%s' "$status" | jsonfilter -e "@.route[@.target='0.0.0.0'].target" 2>/dev/null | head -n 1 || true)"
+        [ -n "$target" ] || target="$(printf '%s' "$status" | jsonfilter -e "@.inactive.route[@.target='0.0.0.0'].target" 2>/dev/null | head -n 1 || true)"
+        [ "$target" = 0.0.0.0 ] || return 1
+    fi
     printf '%s|%s|%s\n' "$device" "$source" "$gateway"
+}
+
+restore_default()
+{
+    old_default="$1"
+    [ -n "$old_default" ] || return 0
+    # Tokens originate from `ip route show`, not from user input.
+    ip -4 route add table main $old_default >/dev/null 2>&1 || true
 }
 
 select_wan()
 {
     selected="$1"
     persist="${2:-1}"
-    [ "$(uci_get enabled)" = 1 ] || return 1
+    if [ "$(uci_get enabled)" != 1 ] && [ "$selected" != wan ]; then
+        return 1
+    fi
     case "$selected" in wan|wan2|wan3) ;; *) return 2 ;; esac
 
     values="$(interface_values "$selected")" || {
@@ -295,31 +351,56 @@ select_wan()
     }
     old_ifs="$IFS"; IFS='|'; set -- $values; IFS="$old_ifs"
     device="$1"; source="$2"; gateway="${3:-}"
+    old_default="$(ip -4 route show table main default 2>/dev/null | head -n 1 || true)"
 
     while ip -4 route del default table main >/dev/null 2>&1; do :; done
     if valid_ipv4 "$gateway"; then
-        ip -4 route add default via "$gateway" dev "$device" src "$source" metric 1 proto static || return 1
+        ip -4 route add default via "$gateway" dev "$device" src "$source" metric 1 proto static || {
+            restore_default "$old_default"
+            return 1
+        }
     else
-        ip -4 route add default dev "$device" src "$source" metric 1 proto static || return 1
+        ip -4 route add default dev "$device" src "$source" metric 1 proto static || {
+            restore_default "$old_default"
+            return 1
+        }
+    fi
+
+    if [ "$selected" = wan3 ]; then
+        if [ "$(uci_get wan3_proxy_enable)" = 1 ]; then
+            if ! start_proxy "$device"; then
+                while ip -4 route del default table main >/dev/null 2>&1; do :; done
+                restore_default "$old_default"
+                return 1
+            fi
+        else
+            stop_proxy
+            write_state ready "$device" "USB WAN is active without an upstream proxy"
+        fi
+    else
+        stop_proxy
+        write_state ready "$device" "$selected is active"
     fi
 
     if [ "$persist" = 1 ]; then
         uci -c /etc/config.mesh set "$CONFIG_PACKAGE.$CONFIG_SECTION.active=$selected"
         uci -c /etc/config.mesh commit "$CONFIG_PACKAGE"
     fi
-
-    if [ "$selected" = wan3 ]; then
-        start_proxy "$device" || true
-    else
-        stop_proxy
-        write_state ready "$device" "$selected is active"
-    fi
     log "$selected selected as the main default route"
+}
+
+fallback_to_wan()
+{
+    /usr/local/bin/wan-route-cache wan >/dev/null 2>&1 || true
+    select_wan wan 1 >/dev/null 2>&1 || return 1
 }
 
 apply()
 {
     if [ "$(uci_get enabled)" != 1 ] || [ "$(uci_get wan3_enable)" != 1 ]; then
+        if [ "$(uci_get active)" = wan3 ]; then
+            fallback_to_wan || true
+        fi
         remove_dynamic
         stop_proxy
         write_state disabled "" "USB WAN is disabled"
@@ -327,6 +408,9 @@ apply()
     fi
 
     device="$(detect_device)" || {
+        if [ "$(uci_get active)" = wan3 ]; then
+            fallback_to_wan || true
+        fi
         remove_dynamic
         stop_proxy
         write_state waiting "" "Waiting for a supported USB network device"
@@ -350,6 +434,9 @@ apply()
 
 remove_all()
 {
+    if [ "$(uci_get active)" = wan3 ]; then
+        fallback_to_wan || true
+    fi
     remove_dynamic
     stop_proxy
     write_state disabled "" "USB WAN is stopped"
@@ -363,9 +450,16 @@ route_event()
     [ -n "$active" ] || active=wan
     [ "$changed" = "$active" ] || return 0
     case "$action" in
-        ifup|up) select_wan "$active" 0 >/dev/null 2>&1 || true ;;
+        ifup|ifupdate|up|update)
+            if ! select_wan "$active" 0 >/dev/null 2>&1; then
+                [ "$active" = wan3 ] && fallback_to_wan || true
+            fi
+            ;;
         ifdown|down)
-            [ "$active" = wan3 ] && stop_proxy
+            if [ "$active" = wan3 ]; then
+                stop_proxy
+                fallback_to_wan || true
+            fi
             ;;
     esac
 }
