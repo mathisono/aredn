@@ -2,11 +2,15 @@
 function readCalibration(path) { const value = fs.readfile(path); if (!value) return null; try { return json(value); } catch (_) { return null; } }
 const calibrationBoards = { "mikrotik,routerboard-952ui-5ac2nd": true, "mikrotik,hap-ac2": true, "mikrotik,hap-ac3": true };
 if (auth.isAdmin && calibrationBoards[hardware.getBoardModel().id]) {
+    const calibrationHost = uciMesh.get("aredn", "multiwan", "calibration_host") || "";
+    const calibrationUrl = uciMesh.get("aredn", "multiwan", "calibration_url") || "";
+    const calibrationConfigured = calibrationHost !== "" && index(calibrationUrl, `https://${calibrationHost}/`) === 0;
     const links = [ { name: "wan", label: "WAN 1" }, { name: "wan2", label: "WAN 2" }, { name: "wan3", label: "USB WAN" } ];
     for (let i = 0; i < length(links); i++) { links[i].status = readCalibration(`/tmp/wan-calibration/${links[i].name}.status.json`); links[i].result = readCalibration(`/tmp/wan-calibration/${links[i].name}.result.json`); }
 %}
 <div id="link-calibration" class="ctrl" hx-get="status/e/link-calibration" hx-target="#ctrl-modal">
     <div class="section-title">WAN Link Calibration</div>
+    <div class="section"><div class="t">{{calibrationConfigured ? calibrationHost : "configure HTTPS object"}}</div><div class="s">administrator-selected calibration destination</div></div>
     <div class="section cols">
     {% for (let i = 0; i < length(links); i++) { const link = links[i]; const running = link.status?.status === "running"; const result = link.result; %}
         <div>{% if (running) { %}<div class="t">running</div><div class="s">{{link.label}} {{link.status.stage || ""}}</div>{% } else if (result?.status === "complete") { %}<div class="t">{{sprintf("%.1f", result.mbps)}} Mbps</div><div class="s">{{link.label}} · {{result.bin}}</div>{% } else { %}<div class="t">-</div><div class="s">{{link.label}} · {{link.status?.message || "not calibrated"}}</div>{% } %}</div>
