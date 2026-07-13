@@ -44,15 +44,15 @@ if (request.env.REQUEST_METHOD === "PUT") {
         const enabled = request.args.wan3_enable === "on" ? "1" : "0";
         const proxyEnabled = request.args.proxy_enable === "on" ? "1" : "0";
         const device = request.args.wan3_device || "auto";
-        const proxyHost = request.args.proxy_host || "192.168.49.1";
-        const proxyPort = int(request.args.proxy_port || 0) ?? 0;
+        const proxyHost = request.args.proxy_host || uciMesh.get("aredn", "multiwan", "wan3_proxy_host") || "192.168.49.1";
+        const proxyPort = int(request.args.proxy_port || uciMesh.get("aredn", "multiwan", "wan3_proxy_port") || 8000) ?? 0;
         const proxyUser = request.args.proxy_username || "";
         const proxyPassword = request.args.proxy_password || "";
         const wasActive = (uciMesh.get("aredn", "multiwan", "active") || "wan") === "wan3";
 
         if (device !== "auto" && !match(device, /^[A-Za-z0-9_.:-]+$/)) error = "USB interface must be 'auto' or a valid Linux interface name";
-        else if (!match(proxyHost, constants.reIP)) error = "Proxy address must be an IPv4 address";
-        else if (proxyPort < 1 || proxyPort > 65535) error = "Proxy port must be between 1 and 65535";
+        else if (proxyEnabled === "1" && !match(proxyHost, constants.reIP)) error = "Proxy address must be an IPv4 address";
+        else if (proxyEnabled === "1" && (proxyPort < 1 || proxyPort > 65535)) error = "Proxy port must be between 1 and 65535";
         else if (!validText(proxyUser, 128) || !validText(proxyPassword, 256)) error = "Proxy credentials contain unsupported characters or are too long";
         else {
             uciMesh.set("aredn", "multiwan", "wan3_enable", enabled);
@@ -79,7 +79,7 @@ if (request.env.REQUEST_METHOD === "PUT") {
             }
             else {
                 system(enabled === "1" ? "/usr/local/bin/wan3-manager apply >/dev/null 2>&1 &" : "/usr/local/bin/wan3-manager remove >/dev/null 2>&1 &");
-                message = enabled === "1" ? "USB WAN settings saved; device discovery is running" : "USB WAN disabled";
+                message = enabled === "1" ? "Phone USB tether settings saved; wan3 device discovery is running" : "USB WAN disabled";
             }
         }
     }
@@ -89,11 +89,11 @@ if (request.env.REQUEST_METHOD === "PUT") {
         uciMesh.set("aredn", "multiwan", "wan3_enable", "1");
         uciMesh.set("aredn", "multiwan", "active", "wan3");
         uciMesh.commit("aredn");
-        if (system("/usr/local/bin/wan-route-cache all >/dev/null 2>&1; /usr/local/bin/wan3-manager select wan3 >/dev/null 2>&1") === 0) message = "USB WAN selected as the active Internet path";
+        if (system("/usr/local/bin/wan-route-cache all >/dev/null 2>&1; /usr/local/bin/wan3-manager select wan3 >/dev/null 2>&1") === 0) message = "Phone USB tether selected as the active Internet path";
         else {
             uciMesh.set("aredn", "multiwan", "active", previous);
             uciMesh.commit("aredn");
-            error = "USB WAN is not ready; verify the cable, PdaNet, DHCP, and proxy settings";
+            error = "USB WAN is not ready; verify the phone-to-hAP USB cable, PdaNet USB mode, DHCP, and hAP proxy settings";
         }
     }
     else if (action === "fallback") {
@@ -128,27 +128,28 @@ const interfaceUp = interfaceState?.up === true;
 const proxyRunning = !!fs.access("/var/run/wan3-redsocks.pid");
 %}
 <div class="dialog">
-    {{_R("dialog-header", "USB WAN / PdaNet")}}
+    {{_R("dialog-header", "Phone USB Tether / PdaNet WAN")}}
     <div id="usb-wan-dialog-state">
         {% if (error !== "") { %}<div><b>{{error}}</b></div><hr>{% } %}
         {% if (message !== "") { %}<div>{{message}}</div><hr>{% } %}
+        <div class="cols"><div><div class="o">USB tether topology</div><div class="m">Android phone → USB cable → hAP USB host → logical interface wan3</div></div><div style="flex:0;text-align:right;white-space:nowrap"><div>RNDIS / CDC</div><div class="m">DHCP on the hAP</div></div></div>
         <div class="cols"><div><div class="o">Runtime status</div><div class="m">{{managerState?.message || (enabled ? "waiting for status" : "disabled")}}</div></div><div style="flex:0;text-align:right;white-space:nowrap"><div>{{interfaceUp ? "up" : "down"}}{{l3device ? " · " + l3device : ""}}</div><div class="m">{{address || "no IPv4 address"}}</div></div></div>
         <div class="cols"><div><div class="o">Current default</div><div class="m">Selected multi-WAN path</div></div><div style="flex:0">{{active}}</div></div>
-        <div class="cols"><div><div class="o">Transparent proxy</div><div class="m">TCP through HTTP CONNECT; general UDP is not proxied</div></div><div style="flex:0">{{proxyRunning ? "running" : proxyEnabled ? "stopped" : "disabled"}}</div></div>
+        <div class="cols"><div><div class="o">hAP transparent proxy</div><div class="m">Uses the PdaNet HTTP CONNECT proxy reached over the same USB tether; general UDP is not proxied</div></div><div style="flex:0">{{proxyRunning ? "running" : proxyEnabled ? "stopped" : "disabled"}}</div></div>
         <hr>
         <form id="usb-wan-form">
-            <div class="cols"><div><div class="o">Enable USB WAN</div><div class="m">Create logical interface wan3 when a USB network device is present</div></div><div style="flex:0"><input type="checkbox" name="wan3_enable" {{enabled ? "checked" : ""}}></div></div>
-            <div class="cols"><div><div class="o">USB interface</div><div class="m">Use auto for RNDIS/CDC detection, or enter a specific interface</div></div><div style="flex:0"><input name="wan3_device" type="text" size="16" pattern="auto|[A-Za-z0-9_.:-]+" value="{{deviceSetting}}" required></div></div>
+            <div class="cols"><div><div class="o">Enable phone USB tether as WAN 3</div><div class="m">Create wan3 when the hAP detects a USB RNDIS/CDC network adapter from the phone</div></div><div style="flex:0"><input type="checkbox" name="wan3_enable" {{enabled ? "checked" : ""}}></div></div>
+            <div class="cols"><div><div class="o">USB network interface on the hAP</div><div class="m">Use auto for USB RNDIS/CDC detection, or enter the exact Linux interface shown by the hAP</div></div><div style="flex:0"><input name="wan3_device" type="text" size="16" pattern="auto|[A-Za-z0-9_.:-]+" value="{{deviceSetting}}" required></div></div>
             <hr>
-            <div class="cols"><div><div class="o">Use upstream proxy</div><div class="m">Required by PdaNet USB mode on many Android phones</div></div><div style="flex:0"><input type="checkbox" name="proxy_enable" {{proxyEnabled ? "checked" : ""}}></div></div>
-            <div class="cols"><div><div class="o">Proxy IPv4 address</div><div class="m">PdaNet commonly uses 192.168.49.1</div></div><div style="flex:0"><input name="proxy_host" type="text" size="16" pattern="{{constants.patIP}}" value="{{proxyHost}}" required></div></div>
-            <div class="cols"><div><div class="o">Proxy port</div><div class="m">PdaNet commonly uses TCP port 8000</div></div><div style="flex:0"><input name="proxy_port" type="number" min="1" max="65535" value="{{proxyPort}}" required></div></div>
-            <div class="cols"><div><div class="o">Proxy username</div><div class="m">Leave blank unless the upstream proxy requires authentication</div></div><div style="flex:0"><input name="proxy_username" type="text" size="20" maxlength="128" value="{{proxyUser}}"></div></div>
+            <div class="cols"><div><div class="o">Use PdaNet upstream proxy</div><div class="m">Configure the hAP to send public IPv4 TCP through the HTTP CONNECT proxy exposed by PdaNet over USB</div></div><div style="flex:0"><input type="checkbox" name="proxy_enable" {{proxyEnabled ? "checked" : ""}}></div></div>
+            <div class="cols"><div><div class="o">Proxy IPv4 address</div><div class="m">Address reachable from wan3; PdaNet commonly uses 192.168.49.1</div></div><div style="flex:0"><input name="proxy_host" type="text" size="16" pattern="{{constants.patIP}}" value="{{proxyHost}}"></div></div>
+            <div class="cols"><div><div class="o">Proxy TCP port</div><div class="m">PdaNet commonly exposes HTTP CONNECT on port 8000</div></div><div style="flex:0"><input name="proxy_port" type="number" min="1" max="65535" value="{{proxyPort}}"></div></div>
+            <div class="cols"><div><div class="o">Proxy username</div><div class="m">Leave blank unless the PdaNet proxy requires authentication</div></div><div style="flex:0"><input name="proxy_username" type="text" size="20" maxlength="128" value="{{proxyUser}}"></div></div>
             <div class="cols"><div><div class="o">Proxy password</div><div class="m">Leave blank to keep {{haveProxyPassword ? "the saved password" : "no password"}}</div></div><div style="flex:0"><input name="proxy_password" type="password" size="20" maxlength="256" autocomplete="new-password"></div></div>
             {% if (haveProxyPassword) { %}<div class="cols"><div><div class="o">Clear saved password</div></div><div style="flex:0"><input type="checkbox" name="proxy_password_clear"></div></div>{% } %}
         </form>
-        {{_H("PdaNet USB mode commonly exposes an HTTP CONNECT proxy at 192.168.49.1:8000. When enabled, AREDN runs a private redsocks instance and redirects public IPv4 TCP sessions from LAN clients, plus public TCP created by the node itself. Mesh, LAN, private, 44Net, and the proxy destination are excluded. UDP cannot generally use an HTTP CONNECT proxy; UDP/443 is rejected while USB WAN is active so browsers can fall back from QUIC/HTTP3 to TCP/HTTPS.")}}
-        <div class="cols"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#usb-wan-form" hx-vals='{"action":"save"}'>Save USB WAN</button><div style="flex:1"></div><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"fallback"}'>Use WAN 1</button><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"activate"}' {{!enabled || !interfaceUp ? "disabled" : ""}}>Use USB WAN now</button></div>
+        {{_H("The hAP first treats the phone as a USB network adapter and obtains wan3 addressing by DHCP. When PdaNet proxy mode is enabled, the hAP then runs its private redsocks instance using the proxy address, port, and optional credentials entered above. Public IPv4 TCP from LAN clients and the node is proxied; mesh, LAN, private, 44Net, reserved, and proxy-destination traffic is excluded. UDP cannot generally use HTTP CONNECT, so UDP/443 is rejected to encourage browser fallback to TCP/HTTPS.")}}
+        <div class="cols"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#usb-wan-form" hx-vals='{"action":"save"}'>Save USB tether settings</button><div style="flex:1"></div><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"fallback"}'>Use WAN 1</button><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"activate"}' {{!enabled || !interfaceUp ? "disabled" : ""}}>Use phone USB tether now</button></div>
     </div>
     {{_R("dialog-footer", "nocancel")}}
     <script>(function(){ {{_R("open")}} htmx.on("#dialog-done", "click", _ => { htmx.ajax("GET", "/a/u-usb-wan", { target: "#usb-wan", swap: "outerHTML" }); htmx.ajax("GET", "/a/u-link-calibration", { target: "#link-calibration", swap: "outerHTML" }); }); })();</script>
