@@ -19,7 +19,7 @@ require_file()
 
 require_absent()
 {
-    [ ! -e "$1" ] || fail "$1 must not be part of the base firmware overlay"
+    [ ! -e "$1" ] || fail "$1 must not be part of the base firmware or package"
 }
 
 require_text()
@@ -43,6 +43,7 @@ PKG_FILES="$PKG/files"
 MANAGER="$PKG_FILES/usr/local/bin/wan3-manager"
 ROUTE_CACHE="$PKG_FILES/usr/local/bin/wan-route-cache"
 CALIBRATE="$PKG_FILES/usr/local/bin/wan-calibrate"
+INIT="$PKG_FILES/etc/init.d/wan3-manager"
 USB_UI="$PKG_FILES/app/main/status/e/usb-wan.ut"
 CAL_UI="$PKG_FILES/app/main/status/e/link-calibration.ut"
 MAIN_UI="$PKG_FILES/app/main/multiwan.ut"
@@ -56,11 +57,10 @@ $PKG/Makefile
 $MANAGER
 $ROUTE_CACHE
 $CALIBRATE
-$PKG_FILES/etc/init.d/wan3-manager
+$INIT
 $PKG_FILES/etc/hotplug.d/net/95-wan3-manager
 $PKG_FILES/etc/hotplug.d/iface/95-wan3-manager
 $DEFAULTS
-$PKG_FILES/etc/uci-defaults/98_wan3_redsocks
 $MAIN_UI
 $PKG_FILES/app/main/u-multiwan.ut
 $USB_UI
@@ -83,11 +83,10 @@ SHELL_FILES="
 $MANAGER
 $ROUTE_CACHE
 $CALIBRATE
-$PKG_FILES/etc/init.d/wan3-manager
+$INIT
 $PKG_FILES/etc/hotplug.d/net/95-wan3-manager
 $PKG_FILES/etc/hotplug.d/iface/95-wan3-manager
 $DEFAULTS
-$PKG_FILES/etc/uci-defaults/98_wan3_redsocks
 $PKG_FILES/www/cgi-bin/apps/aredn-multiwan/admin
 "
 for file in $SHELL_FILES; do
@@ -117,7 +116,8 @@ for file in \
     files/app/main/status/e/link-calibration.ut \
     files/app/partial/usb-wan.ut \
     files/app/partial/link-calibration.ut \
-    patches/759-mikrotik-usb-wan.patch; do
+    patches/759-mikrotik-usb-wan.patch \
+    "$PKG_FILES/etc/uci-defaults/98_wan3_redsocks"; do
     require_absent "$file"
 done
 reject_text files/app/partial/general.ut 'link-calibration'
@@ -135,10 +135,12 @@ reject_text configs/ath79-mikrotik.config 'CONFIG_PACKAGE_aredn-multiwan=y'
 # Package metadata, dependencies, lifecycle, and installed paths.
 require_text "$PKG/Makefile" 'PKG_NAME:=aredn-multiwan'
 require_text "$PKG/Makefile" 'PKG_VERSION:=0.1.0'
+require_text "$PKG/Makefile" 'PKG_RELEASE:=2'
 require_text "$PKG/Makefile" 'PKGARCH:=all'
 require_text "$PKG/Makefile" '+kmod-usb-net-rndis'
 require_text "$PKG/Makefile" '+kmod-usb-net-cdc-ether'
 require_text "$PKG/Makefile" '+kmod-usb-net-cdc-ncm'
+require_text "$PKG/Makefile" '+TARGET_ath79:kmod-usb2'
 require_text "$PKG/Makefile" '+redsocks'
 require_text "$PKG/Makefile" '+curl'
 require_text "$PKG/Makefile" '+ca-bundle'
@@ -148,6 +150,7 @@ require_text "$PKG/Makefile" 'Package/aredn-multiwan/postinst'
 require_text "$PKG/Makefile" 'Package/aredn-multiwan/prerm'
 require_text "$PKG/Makefile" '$(INSTALL_DATA) ./files/app/main/multiwan.ut'
 require_text "$PKG/Makefile" '$(INSTALL_BIN) ./files/www/cgi-bin/apps/aredn-multiwan/admin'
+reject_text "$PKG/Makefile" '98_wan3_redsocks'
 
 # Package-created defaults must match the UI and documentation.
 require_text "$DEFAULTS" "set aredn.multiwan.enabled='0'"
@@ -157,7 +160,7 @@ require_text "$DEFAULTS" "set aredn.multiwan.wan3_device='auto'"
 require_text "$DEFAULTS" "set aredn.multiwan.wan3_proxy_enable='1'"
 require_text "$DEFAULTS" "set aredn.multiwan.wan3_proxy_host='192.168.49.1'"
 require_text "$DEFAULTS" "set aredn.multiwan.wan3_proxy_port='8000'"
-require_text "$DEFAULTS" "set aredn.multiwan.wan3_proxy_local_port='12345'"
+require_text "$DEFAULTS" "set aredn.multiwan.wan3_proxy_local_port='12346'"
 require_text "$DEFAULTS" "set aredn.multiwan.calibration_provider='Hurricane Electric / Hayward Internet Exchange'"
 require_text "$DEFAULTS" "set aredn.multiwan.calibration_cooldown='300'"
 
@@ -169,8 +172,12 @@ require_text "$MANAGER" 'type = http-connect;'
 require_text "$MANAGER" 'table inet $NFT_TABLE'
 require_text "$MANAGER" 'fallback_to_wan'
 require_text "$MANAGER" 'MANAGER_LOCK="$STATE_DIR/.manager.lock"'
+require_text "$MANAGER" '[ -n "$local_port" ] || local_port=12346'
 require_text "$ROUTE_CACHE" 'wan) cache_one wan 101'
 require_text "$ROUTE_CACHE" 'wan2) cache_one wan2 102'
+reject_text "$MANAGER" '/etc/init.d/redsocks stop'
+reject_text "$INIT" '/etc/init.d/redsocks stop'
+reject_text "$DEFAULTS" '/etc/init.d/redsocks disable'
 
 # Calibration remains authenticated, bounded, allow-listed, and proxy-aware.
 require_text "$CALIBRATE" 'wan|wan2|wan3'
@@ -191,12 +198,19 @@ require_text "$USB_DOC" 'optional installable package'
 require_text "$USB_DOC" 'CONFIG_PACKAGE_aredn-multiwan=m'
 require_text "$USB_DOC" 'Address: 192.168.49.1'
 require_text "$USB_DOC" 'Port:    8000'
+require_text "$USB_DOC" 'private listener on TCP port `12346`'
+require_text "$USB_DOC" 'does not disable or reuse the stock redsocks service'
 require_text "$USB_DOC" 'does **not yet create the physical or VLAN definition for `wan2`**'
 require_text "$USB_DOC" 'packages/aredn-multiwan/Makefile'
 require_text "$CAL_DOC" 'does **not yet automatically switch WANs based on the result**'
 require_text "$CAL_DOC" 'at most about 41 MiB'
 require_text "$VERIFY_DOC" 'Package-only build'
 require_text docs/README.md 'installable APK'
+
+# The copies shipped on the node must be byte-for-byte identical to the source guides.
+cmp -s "$USB_DOC" "$PKG_FILES/usr/share/doc/aredn-multiwan/multiwan-usb-wan.md" || fail 'packaged USB WAN guide is stale'
+cmp -s "$CAL_DOC" "$PKG_FILES/usr/share/doc/aredn-multiwan/multiwan-link-calibration.md" || fail 'packaged calibration guide is stale'
+cmp -s "$VERIFY_DOC" "$PKG_FILES/usr/share/doc/aredn-multiwan/multiwan-verification.md" || fail 'packaged verification guide is stale'
 
 if [ -d openwrt ]; then
     [ -L openwrt/package/feeds/arednlocal/aredn-multiwan ] || \
