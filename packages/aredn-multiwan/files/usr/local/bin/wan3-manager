@@ -197,7 +197,7 @@ start_proxy()
     local_port="$(uci_get wan3_proxy_local_port)"
     [ -n "$proxy_host" ] || proxy_host=192.168.49.1
     [ -n "$proxy_port" ] || proxy_port=8000
-    [ -n "$local_port" ] || local_port=12345
+    [ -n "$local_port" ] || local_port=12346
 
     valid_ipv4 "$proxy_host" || {
         stop_proxy
@@ -219,9 +219,6 @@ start_proxy()
     lan_device="$(printf '%s' "$lan_json" | jsonfilter -e '@.l3_device' 2>/dev/null || true)"
     valid_device "$lan_device" || lan_device=br-lan
 
-    # The feed package ships a generic init service using the same example
-    # listener port. AREDN owns a separate generated instance for wan3.
-    /etc/init.d/redsocks stop >/dev/null 2>&1 || true
     stop_proxy
 
     {
