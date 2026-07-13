@@ -9,6 +9,7 @@ start()
     # The package-provided service owns /etc/redsocks.conf and normally uses
     # port 12345. AREDN uses a separate generated configuration and PID file.
     /etc/init.d/redsocks stop >/dev/null 2>&1 || true
+    /usr/local/bin/wan-route-cache all >/dev/null 2>&1 || true
     /usr/local/bin/wan3-manager apply >/dev/null 2>&1 || true
 }
 
@@ -20,5 +21,6 @@ stop()
 reload()
 {
     /etc/init.d/redsocks stop >/dev/null 2>&1 || true
+    /usr/local/bin/wan-route-cache all >/dev/null 2>&1 || true
     /usr/local/bin/wan3-manager apply >/dev/null 2>&1 || true
 }
