@@ -1,9 +1,23 @@
 #!/bin/sh
-# Preserve each WAN's learned default in a private table so manual switching
-# still works after the selected route replaces the main-table default.
+# Preserve each WAN's netifd-learned default in a private table so manual
+# switching still works after the selected route replaces the main default.
 
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH LC_ALL=C
+
+valid_name()
+{
+    case "$1" in ''|*[!A-Za-z0-9_.:-]*) return 1 ;; *) return 0 ;; esac
+}
+
+valid_ipv4()
+{
+    printf '%s\n' "$1" | awk -F. '
+        NF != 4 { bad = 1 }
+        { for (i = 1; i <= 4; i++) if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) bad = 1 }
+        END { exit bad }
+    '
+}
 
 cache_one()
 {
@@ -12,17 +26,26 @@ cache_one()
     status="$(ubus call "network.interface.$name" status 2>/dev/null)" || return 0
     up="$(printf '%s' "$status" | jsonfilter -e '@.up' 2>/dev/null || true)"
     [ "$up" = true ] || [ "$up" = 1 ] || return 0
+
     device="$(printf '%s' "$status" | jsonfilter -e '@.l3_device' 2>/dev/null || true)"
-    case "$device" in ''|*[!A-Za-z0-9_.:-]*) return 0 ;; esac
-    route="$(ip -4 route show table main default dev "$device" 2>/dev/null | head -n 1 || true)"
-    [ -n "$route" ] || return 0
-    ip -4 route replace table "$table" $route >/dev/null 2>&1 || true
+    source="$(printf '%s' "$status" | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null || true)"
+    gateway="$(printf '%s' "$status" | jsonfilter -e "@.route[@.target='0.0.0.0'].nexthop" 2>/dev/null | head -n 1 || true)"
+    [ -n "$gateway" ] || gateway="$(printf '%s' "$status" | jsonfilter -e "@.inactive.route[@.target='0.0.0.0'].nexthop" 2>/dev/null | head -n 1 || true)"
+
+    valid_name "$device" || return 0
+    valid_ipv4 "$source" || return 0
+
+    if valid_ipv4 "$gateway"; then
+        ip -4 route replace table "$table" default via "$gateway" dev "$device" src "$source" metric 10 proto static >/dev/null 2>&1 || true
+    else
+        ip -4 route replace table "$table" default dev "$device" src "$source" metric 10 proto static >/dev/null 2>&1 || true
+    fi
 }
 
 case "${1:-all}" in
     wan) cache_one wan 101 ;;
     wan2) cache_one wan2 102 ;;
-    wan3) : ;; # netifd already owns table 103
+    wan3) : ;; # netifd owns table 103 for the dynamic USB interface
     all)
         cache_one wan 101
         cache_one wan2 102
