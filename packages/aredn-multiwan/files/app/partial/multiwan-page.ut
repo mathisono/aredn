@@ -2,8 +2,8 @@
     <div class="noctrl">
         <div class="section-title">Experimental Multi-WAN Package</div>
         <div class="section">
-            <div class="t">WAN 1 · WAN 2 · USB WAN</div>
-            <div class="s">optional package; existing single-WAN behavior remains the default</div>
+            <div class="t">WAN 1 · WAN 2 · Phone USB Tether</div>
+            <div class="s">wan3 is a phone-to-hAP USB RNDIS/CDC input; optional PdaNet proxy settings are applied on the hAP</div>
         </div>
     </div>
     <hr>
@@ -15,7 +15,7 @@
         <div class="section-title">Setup and limitations</div>
         <div class="section">
             <div class="t"><a target="_blank" href="/apps/aredn-multiwan/help.html">Open the on-node setup guide</a></div>
-            <div class="s">PdaNet defaults, route selection, calibration usage, verification, and recovery</div>
+            <div class="s">USB tether and PdaNet proxy setup, user-selected calibration object, route selection, verification, and recovery</div>
         </div>
     </div>
 </div>
