@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=aredn-multiwan
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=GPL-3.0-only
 PKG_MAINTAINER:=AREDN contributors
 PKGARCH:=all
@@ -17,7 +17,7 @@ define Package/aredn-multiwan
   DEPENDS:=@(TARGET_ath79_mikrotik||TARGET_ipq40xx_mikrotik) \
     +ca-bundle +curl +ip +jshn +jsonfilter +nftables-json +redsocks \
     +kmod-nft-nat +kmod-usb-net-rndis +kmod-usb-net-cdc-ether \
-    +kmod-usb-net-cdc-ncm
+    +kmod-usb-net-cdc-ncm +TARGET_ath79:kmod-usb2
 endef
 
 define Package/aredn-multiwan/description
@@ -49,9 +49,6 @@ define Package/aredn-multiwan/postinst
 if [ -x /etc/uci-defaults/95-aredn-multiwan ]; then
   /etc/uci-defaults/95-aredn-multiwan && rm -f /etc/uci-defaults/95-aredn-multiwan
 fi
-if [ -x /etc/uci-defaults/98_wan3_redsocks ]; then
-  /etc/uci-defaults/98_wan3_redsocks && rm -f /etc/uci-defaults/98_wan3_redsocks
-fi
 /etc/init.d/wan3-manager enable >/dev/null 2>&1 || true
 /etc/init.d/wan3-manager restart >/dev/null 2>&1 || true
 exit 0
@@ -82,7 +79,6 @@ define Package/aredn-multiwan/install
 
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/etc/uci-defaults/95-aredn-multiwan $(1)/etc/uci-defaults/
-	$(INSTALL_BIN) ./files/etc/uci-defaults/98_wan3_redsocks $(1)/etc/uci-defaults/
 
 	$(INSTALL_DIR) $(1)/app/main/status/e
 	$(INSTALL_DATA) ./files/app/main/status/e/usb-wan.ut $(1)/app/main/status/e/
