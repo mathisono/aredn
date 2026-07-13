@@ -1,4 +1,4 @@
-# AREDN Multi-WAN package and USB/PdaNet setup
+# AREDN Multi-WAN package and phone USB/PdaNet setup
 
 ## Package status
 
@@ -29,13 +29,13 @@ apk add aredn-multiwan
 A local development build normally produces an artifact below:
 
 ```text
-openwrt/bin/packages/<architecture>/arednlocal/aredn-multiwan-0.1.0-r2.apk
+openwrt/bin/packages/<architecture>/arednlocal/aredn-multiwan-0.1.0-r3.apk
 ```
 
 For a local file, use the APK command appropriate to the development image, for example:
 
 ```sh
-apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0-r2.apk
+apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0-r3.apk
 ```
 
 Check free overlay space before installing, especially on the hAP ac lite. The APK pulls USB networking modules and redsocks as dependencies; installation should fail cleanly rather than be forced when the node does not have enough storage.
@@ -56,7 +56,7 @@ Saved `aredn.multiwan` UCI settings remain after removal so a later reinstall ca
 |---|---|---|
 | `wan` | Existing AREDN Ethernet or Wi-Fi WAN | Preserved as the default and fallback path |
 | `wan2` | Second Ethernet WAN | Can be selected and calibrated when separately configured |
-| `wan3` | USB RNDIS/CDC tether | Created dynamically by this package |
+| `wan3` | Android phone USB RNDIS/CDC tether | Created dynamically by this package |
 
 Private route tables are:
 
@@ -70,7 +70,29 @@ Only one preferred IPv4 default route is copied into the main table. This is fai
 
 > Current limitation: the package does **not yet create the physical or VLAN definition for `wan2`**. The second Ethernet interface must already exist before it can be selected or calibrated.
 
-## USB device support
+## Required phone-to-hAP USB topology
+
+PdaNet support in this package is specifically for a phone shared through a **USB tether into the hAP USB host port**:
+
+```text
+Android phone running PdaNet
+        |
+        | data-capable USB cable
+        v
+hAP USB host controller
+        |
+        | RNDIS / CDC Ethernet / CDC NCM network device
+        v
+logical AREDN interface wan3 (DHCP)
+        |
+        +-- optional PdaNet HTTP CONNECT proxy configured on the hAP
+```
+
+The hAP must see a USB network interface and obtain an IPv4 address on `wan3`. PdaNet's proxy address is then reached over that same USB network. The package is not a desktop PdaNet client and does not use ADB or a Wi-Fi Direct connection.
+
+If the phone exposes only an application proxy but no USB network adapter or DHCP service, the hAP will have no path to the proxy and `wan3` will remain down.
+
+## USB device support on the hAP
 
 Package dependencies pull in:
 
@@ -84,30 +106,33 @@ Package dependencies pull in:
 
 The package uses sysfs to confirm a manually entered device is USB-backed. Automatic discovery recognizes USB-backed devices and conventional names such as `usb0`, `rndis0`, `wwan0`, and `enx...`.
 
+The hAP creates `wan3` dynamically and runs DHCP on the detected USB network device. The USB cable must support data and the phone must present a supported USB networking class.
+
 ## Administrator setup for a standard routed USB tether
 
 1. Install `aredn-multiwan`.
-2. Connect the Android device using a data-capable USB cable.
-3. Enable Android USB tethering.
+2. Connect the Android phone to the hAP USB host port using a data-capable cable.
+3. Enable Android USB tethering so the hAP sees an RNDIS/CDC network adapter.
 4. Log in to the AREDN node and open the `aredn-multiwan` application.
-5. Open **USB WAN**.
-6. Enable **USB WAN**.
-7. Leave **USB interface** set to `auto` unless more than one USB network device is present.
-8. Disable **Use upstream proxy** for an ordinary routed tether.
-9. Select **Save USB WAN**.
+5. Open **Phone USB Tether**.
+6. Enable **phone USB tether as WAN 3**.
+7. Leave **USB network interface on the hAP** set to `auto` unless more than one USB network device is present.
+8. Disable **Use PdaNet upstream proxy** for an ordinary routed tether.
+9. Select **Save USB tether settings**.
 10. Wait for `wan3` to show `up` and an IPv4 address.
-11. Select **Use USB WAN now**.
+11. Select **Use phone USB tether now**.
 
-## PdaNet USB setup
+## PdaNet USB setup and hAP proxy fields
 
-PdaNet USB mode commonly exposes an HTTP CONNECT proxy instead of a complete routed Internet path.
+PdaNet USB mode commonly presents both a USB network interface and an HTTP CONNECT proxy. The phone supplies the USB link; the proxy information is entered and used on the hAP.
 
 1. Connect the phone to the hAP USB host port with a data cable.
 2. Open PdaNet+ on Android.
 3. Enable **Activate USB Mode** and leave PdaNet running.
-4. Open the package application and the **USB WAN** editor.
-5. Enable **USB WAN** and **Use upstream proxy**.
-6. Use the values shown by the phone. Common defaults are:
+4. Confirm the hAP detects a USB RNDIS/CDC network interface and receives a `wan3` IPv4 address.
+5. Open the package application and the **Phone USB Tether / PdaNet WAN** editor.
+6. Enable **phone USB tether as WAN 3** and **Use PdaNet upstream proxy**.
+7. Enter the proxy values shown by PdaNet. Common defaults are:
 
    ```text
    Address: 192.168.49.1
@@ -115,8 +140,19 @@ PdaNet USB mode commonly exposes an HTTP CONNECT proxy instead of a complete rou
    Type:    HTTP CONNECT
    ```
 
-7. Enter proxy credentials only when the phone proxy requires them. Leaving the password field blank preserves the saved password; use **Clear saved password** to remove it.
-8. Save, wait for `wan3` DHCP, and select **Use USB WAN now**.
+8. Enter a proxy username and password only when PdaNet requires authentication. Leaving the password field blank preserves the saved password; use **Clear saved password** to remove it.
+9. Select **Save USB tether settings**.
+10. Wait for `wan3` DHCP, then select **Use phone USB tether now**.
+
+The hAP stores these fields in `/etc/config.mesh/aredn`:
+
+```text
+aredn.multiwan.wan3_proxy_enable
+aredn.multiwan.wan3_proxy_host
+aredn.multiwan.wan3_proxy_port
+aredn.multiwan.wan3_proxy_username
+aredn.multiwan.wan3_proxy_password
+```
 
 ## Transparent proxy behavior
 
@@ -124,8 +160,8 @@ When `wan3` is selected and proxy mode is enabled:
 
 1. `wan3-manager` starts a private redsocks process from a generated configuration, using a private listener on TCP port `12346` by default.
 2. The package does not disable or reuse the stock redsocks service; it uses its own configuration and PID file.
-3. nftables redirects public IPv4 TCP sessions from local AREDN clients to the package's redsocks listener.
-4. Redsocks creates HTTP CONNECT tunnels through the configured phone proxy.
+3. nftables redirects public IPv4 TCP sessions from local AREDN clients and from the node itself to the package's redsocks listener.
+4. Redsocks creates HTTP CONNECT tunnels through the PdaNet proxy reached over `wan3`.
 5. The proxy endpoint itself is excluded so the redsocks connection is not redirected recursively.
 6. LAN, mesh, private, carrier-grade NAT, multicast, reserved, and 44Net destinations are excluded.
 7. Public UDP port 443 is rejected so browsers normally fall back from QUIC/HTTP/3 to TCP/HTTPS.
@@ -139,6 +175,37 @@ Important limitations:
 - IPv6 Internet traffic is not transparently proxied.
 - The package does not alter TTL, hop limit, or carrier-detection fields.
 
+## Administrator-selected calibration object
+
+The **WAN Link Calibration** editor lets a logged-in administrator set:
+
+- a descriptive calibration label
+- a complete HTTPS object URL
+
+Example:
+
+```text
+Label: Hurricane Electric / Hayward Internet Exchange
+URL:   https://speed.example.net/aredn/link-calibration/payload.bin
+```
+
+The URL is stored persistently as `aredn.multiwan.calibration_url`; the hAP derives and stores its hostname as `aredn.multiwan.calibration_host`.
+
+The object must:
+
+- use standard HTTPS with a valid certificate
+- include a DNS hostname and object path
+- contain no embedded credentials, spaces, fragment, or custom port
+- support HTTP range requests and return `206 Partial Content`
+- contain at least 32 MiB
+- avoid redirects
+
+Leaving the URL blank and saving clears the object and disables calibration.
+
+The saved object is user-selectable, but an individual calibration request cannot provide or override a URL. A run request contains only `action=calibrate` and one allow-listed interface name: `wan`, `wan2`, or `wan3`.
+
+For `wan3`, curl remains bound to the USB tether source address and uses the configured PdaNet HTTP CONNECT proxy directly when proxy mode is enabled.
+
 ## Runtime verification
 
 Run from an authenticated shell:
@@ -147,7 +214,7 @@ Run from an authenticated shell:
 # Installed package
 apk info -e aredn-multiwan
 
-# Persistent settings
+# Persistent settings, including USB and calibration inputs
 uci -c /etc/config.mesh show aredn.multiwan
 
 # Package manager state
@@ -174,6 +241,7 @@ nft list table inet aredn_wan3_proxy
 # Logs
 logread -e wan3-manager
 logread -e redsocks
+logread -e wan-calibrate
 ```
 
 Expected USB proxy state:
@@ -196,23 +264,24 @@ ls -l /www/apps/aredn-multiwan/icon.svg
 
 The icon appears only to an authenticated administrator.
 
-### USB WAN remains waiting
+### Phone USB tether remains waiting
 
-- Confirm the cable supports data.
-- Confirm Android or PdaNet shows an active USB session.
+- Confirm the cable supports data, not charging only.
+- Confirm Android or PdaNet shows an active USB tether session.
 - Inspect `/sys/class/net/*/device` using the verification command above.
-- If automatic discovery selects the wrong adapter, enter the exact USB-backed interface name.
+- If automatic discovery selects the wrong adapter, enter the exact USB-backed interface name shown by the hAP.
 - Check drivers with `lsmod | grep -E 'rndis|cdc|usbnet'`.
 
 ### `wan3` has no IPv4 address
 
+- Confirm PdaNet has created a USB network tether, not merely displayed a proxy address.
 - Inspect `logread -e netifd` and `logread -e udhcpc`.
-- Disable and re-enable tethering on the phone.
+- Disable and re-enable PdaNet USB mode on the phone.
 - Remove competing USB Ethernet adapters while using automatic discovery.
 
-### Browsing fails with proxy mode enabled
+### Browsing fails with PdaNet proxy mode enabled
 
-Test the proxy directly:
+Test the phone proxy directly from the hAP:
 
 ```sh
 source_ip="$(ubus call network.interface.wan3 status | jsonfilter -e '@["ipv4-address"][0].address')"
@@ -223,6 +292,13 @@ curl --interface "$source_ip" \
 ```
 
 Verify the address and port shown by PdaNet, inspect `logread -e redsocks`, and confirm the nftables table exists. Disable proxy mode when the phone supplies a normal routed tether.
+
+### Calibration stays disabled
+
+- Open **WAN Link Calibration** and save a complete HTTPS URL.
+- Confirm the URL's hostname matches `aredn.multiwan.calibration_host`.
+- Test a 1 MiB range manually and require HTTP `206` with exactly `1048576` bytes.
+- Confirm the selected WAN is up and has an IPv4 address.
 
 ## Recovery
 
@@ -251,8 +327,8 @@ uci -c /etc/config.mesh commit aredn
 | WAN 1/2 route cache | `packages/aredn-multiwan/files/usr/local/bin/wan-route-cache` |
 | Calibration | `packages/aredn-multiwan/files/usr/local/bin/wan-calibrate` |
 | Administrator application page | `packages/aredn-multiwan/files/app/main/multiwan.ut` |
-| USB editor | `packages/aredn-multiwan/files/app/main/status/e/usb-wan.ut` |
-| Calibration editor | `packages/aredn-multiwan/files/app/main/status/e/link-calibration.ut` |
+| USB and proxy editor | `packages/aredn-multiwan/files/app/main/status/e/usb-wan.ut` |
+| Calibration object and run editor | `packages/aredn-multiwan/files/app/main/status/e/link-calibration.ut` |
 | Application launcher | `packages/aredn-multiwan/files/www/cgi-bin/apps/aredn-multiwan/admin` |
 | Static verification | `tests/verify-multiwan.sh` |
 
