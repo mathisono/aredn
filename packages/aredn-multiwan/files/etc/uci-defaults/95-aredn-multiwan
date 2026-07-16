@@ -25,6 +25,8 @@ set_default wan3_enable 0
 set_default selection_min_bin low
 set_default mesh_share_min_bin medium
 set_default health_interval 30
+set_default health_url 'https://connectivitycheck.gstatic.com/generate_204'
+set_default health_expected_codes 204
 set_default failure_count 2
 set_default promote_count 2
 set_default hold_down 120

@@ -98,6 +98,96 @@ calibration_configured()
     case "$url" in "https://$host/"?*) return 0 ;; *) return 1 ;; esac
 }
 
+health_url()
+{
+    url="$(uci_get health_url)"
+    case "$url" in
+        https://*/*) ;;
+        *) printf '%s\n' 'https://connectivitycheck.gstatic.com/generate_204'; return ;;
+    esac
+    host="${url#https://}"; host="${host%%/*}"
+    case "$host" in
+        ''|*:*|*[^A-Za-z0-9.-]*|.*|*..*|*.) printf '%s\n' 'https://connectivitycheck.gstatic.com/generate_204' ;;
+        *) printf '%s\n' "$url" ;;
+    esac
+}
+
+health_code_allowed()
+{
+    code="$1"
+    codes="$(uci_get health_expected_codes)"
+    [ -n "$codes" ] || codes=204
+    for allowed in $codes; do
+        case "$allowed" in
+            *[!0-9]*|'') continue ;;
+            *) [ "$code" = "$allowed" ] && return 0 ;;
+        esac
+    done
+    return 1
+}
+
+route_valid()
+{
+    device="$1"; source="$2"; gateway="$3"
+    valid_ipv4 "$source" || return 1
+    valid_ipv4 "$gateway" || return 0
+    route="$(ip -4 route get "$gateway" from "$source" oif "$device" 2>/dev/null || true)"
+    [ -n "$route" ] || return 1
+    printf '%s\n' "$route" | grep -q "dev $device" || return 1
+    printf '%s\n' "$route" | grep -q "src $source" || return 1
+}
+
+gateway_icmp_probe()
+{
+    device="$1"; source="$2"; gateway="$3"
+    valid_ipv4 "$gateway" || return 1
+    ping -c 1 -W 2 -I "$source" "$gateway" >/dev/null 2>&1 && return 0
+    ping -c 1 -W 2 -I "$device" "$gateway" >/dev/null 2>&1
+}
+
+https_probe()
+{
+    name="$1"; source="$2"
+    valid_ipv4 "$source" || return 1
+    url="$(health_url)"
+    set -- --silent --show-error --fail --proto '=https' --proto-redir '=https' --max-redirs 0 \
+        --connect-timeout 5 --max-time 12 --interface "$source" --output /dev/null --write-out '%{http_code}'
+    if [ "$name" = wan3 ] && [ "$(uci_get wan3_proxy_enable)" = 1 ]; then
+        proxy_host="$(uci_get wan3_proxy_host)"
+        proxy_port="$(uci_get wan3_proxy_port)"
+        proxy_user="$(uci_get wan3_proxy_username)"
+        proxy_pass="$(uci_get wan3_proxy_password)"
+        [ -n "$proxy_host" ] || proxy_host=192.168.49.1
+        [ -n "$proxy_port" ] || proxy_port=8000
+        valid_ipv4 "$proxy_host" || return 1
+        set -- "$@" --proxy "http://$proxy_host:$proxy_port" --noproxy ''
+        [ -n "$proxy_user" ] && set -- "$@" --proxy-user "$proxy_user:$proxy_pass"
+    else
+        set -- "$@" --proxy ''
+    fi
+    code="$(curl "$@" "$url" 2>/dev/null || true)"
+    health_code_allowed "$code"
+}
+
+availability_probe()
+{
+    name="$1"; device="$2"; source="$3"; gateway="$4"
+    if ! route_valid "$device" "$source" "$gateway"; then
+        PROBE_REASON=route_invalid
+        return 1
+    fi
+    if gateway_icmp_probe "$device" "$source" "$gateway"; then
+        PROBE_REASON=gateway_icmp
+        return 0
+    fi
+    if https_probe "$name" "$source"; then
+        PROBE_REASON=https_reachable
+        return 0
+    fi
+    PROBE_REASON=probe_failed
+    return 1
+}
+
 probe_path()
 {
     name="$1"; values="$2"
@@ -129,11 +219,7 @@ probe_path()
 
     # Availability mode can work before a calibration object is configured.
     # Adaptive mode will not select a path until a fresh speed class exists.
-    if valid_ipv4 "$gateway"; then
-        ping -c 1 -W 2 -I "$device" "$gateway" >/dev/null 2>&1
-    else
-        return 0
-    fi
+    availability_probe "$name" "$device" "$source" "$gateway"
 }
 
 failure_count()
@@ -200,14 +286,15 @@ evaluate_candidate()
 
     current_active="$(uci_get active)"
     probe_ok=0
+    PROBE_REASON=probe_failed
     if probe_path "$name" "$values"; then
         probe_ok=1
         failures="$(failure_count "$name" reset)"
-        healthy=1; reason=reachable
+        healthy=1; reason="$PROBE_REASON"
     else
         failures="$(failure_count "$name" fail)"
         if [ "$failures" -ge "$failure_limit" ]; then
-            healthy=0; reason=probe_failed
+            healthy=0; reason="$PROBE_REASON"
         elif [ "$name" = "$current_active" ]; then
             # A selected path receives the configured failure hysteresis. A
             # currently failing standby is never eligible for promotion.

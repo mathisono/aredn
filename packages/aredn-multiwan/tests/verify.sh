@@ -1,5 +1,5 @@
 #!/bin/sh
-# Static and disposable-mock verification for the standalone PollyWAN r6 source.
+# Static and disposable-mock verification for the standalone PollyWAN r7 source.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
@@ -78,7 +78,7 @@ done
 # Package metadata and optional-only target contract.
 require_text Makefile 'PKG_NAME:=aredn-multiwan'
 require_text Makefile 'PKG_VERSION:=0.1.0'
-require_text Makefile 'PKG_RELEASE:=6'
+require_text Makefile 'PKG_RELEASE:=7'
 require_text Makefile 'URL:=https://github.com/mathisono/AREDN_PollyWAN'
 require_text Makefile '+ip-tiny'
 require_text Makefile '+redsocks'
@@ -109,6 +109,8 @@ require_text "$DEFAULTS" 'set_default port2_role lan'
 require_text "$DEFAULTS" 'set_default port5_dtd 1'
 require_text "$DEFAULTS" 'set_default selection_min_bin low'
 require_text "$DEFAULTS" 'set_default mesh_share_min_bin medium'
+require_text "$DEFAULTS" "set_default health_url 'https://connectivitycheck.gstatic.com/generate_204'"
+require_text "$DEFAULTS" 'set_default health_expected_codes 204'
 require_text "$DEFAULTS" 'set_default failure_count 2'
 require_text "$DEFAULTS" 'set_default promote_count 2'
 require_text "$DEFAULTS" 'set_default hold_down 120'
@@ -201,6 +203,18 @@ require_text "$SLA" 'low) echo 1'
 require_text "$SLA" 'medium) echo 2'
 require_text "$SLA" 'fast) echo 3'
 require_text "$SLA" 'standby_probe_failed'
+require_text "$SLA" 'route_valid'
+require_text "$SLA" 'gateway_icmp_probe'
+require_text "$SLA" 'ping -c 1 -W 2 -I "$source" "$gateway"'
+require_text "$SLA" 'https_probe'
+require_text "$SLA" '--interface "$source"'
+require_text "$SLA" "--proxy ''"
+require_text "$SLA" 'PROBE_REASON=gateway_icmp'
+require_text "$SLA" 'PROBE_REASON=https_reachable'
+require_text "$SLA" 'PROBE_REASON=route_invalid'
+require_text "$SLA" 'PROBE_REASON=probe_failed'
+require_text "$SLA" 'health_expected_codes'
+require_text "$SLA" 'https://connectivitycheck.gstatic.com/generate_204'
 require_text "$SLA" 'failure_count'
 require_text "$SLA" 'promote_count'
 require_text "$SLA" 'promotion_ready'
@@ -323,4 +337,4 @@ for path in (root / 'files/app').rglob('*.ut'):
 print('markup/template balance passed')
 PY
 
-echo 'PollyWAN r6 static and mock verification passed'
+echo 'PollyWAN r7 static and mock verification passed'
