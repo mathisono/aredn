@@ -1,0 +1,627 @@
+#!/bin/sh
+# Manage opt-in Ethernet port roles for PollyWAN on supported MikroTik hAPs.
+# WAN3 is never assigned here: it is permanently the USB RNDIS/CDC input.
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+CONFIG_PACKAGE=aredn
+CONFIG_SECTION=multiwan
+INCLUDE_DIR=/etc/aredn_include
+BACKUP_DIR=/etc/aredn-multiwan-backup/ports
+STATE_DIR=/tmp/wan-port-manager
+STATE_FILE=$STATE_DIR/state.json
+LOCK_DIR=$STATE_DIR/.lock
+MARKER=$INCLUDE_DIR/.aredn-multiwan-ports
+PENDING=$STATE_DIR/pending-token
+DEADLINE=$STATE_DIR/pending-deadline
+TIMER_PID=$STATE_DIR/rollback-pid
+FILES='bridge.network.user lan.network.user wan.network.user dtdlink.network.user swconfig swconfig.user'
+
+mkdir -p "$STATE_DIR" "$INCLUDE_DIR" || exit 1
+
+log() { logger -t aredn-multiwan-ports "$*"; }
+uci_get() { uci -c /etc/config.mesh -q get "$CONFIG_PACKAGE.$CONFIG_SECTION.$1" 2>/dev/null || true; }
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s/\n/\\n/g'; }
+valid_uint() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+valid_role() { case "$1" in lan|wan|wan2|off) return 0 ;; *) return 1 ;; esac; }
+
+radio_mode()
+{
+    uci -c /etc/config.mesh -q get "setup.globals.radio$1_mode" 2>/dev/null || true
+}
+
+wifi_wan_device()
+{
+    radio0="$(radio_mode 0)"
+    radio1="$(radio_mode 1)"
+    if [ "$radio0" = wan ] && [ "$radio1" = wan ]; then
+        return 2
+    fi
+    if [ "$radio0" = wan ]; then
+        printf '%s\n' wlan0
+        return 0
+    fi
+    if [ "$radio1" = wan ]; then
+        printf '%s\n' wlan1
+        return 0
+    fi
+    return 1
+}
+
+wan_transport()
+{
+    device="$(wifi_wan_device 2>/dev/null)"
+    rc=$?
+    case "$rc" in
+        0) printf 'wifi:%s\n' "$device" ;;
+        1) printf '%s\n' 'ethernet:br-wan' ;;
+        2) printf '%s\n' 'invalid:both-radios'; return 2 ;;
+        *) return 1 ;;
+    esac
+}
+
+board_name()
+{
+    cat /tmp/sysinfo/board_name 2>/dev/null || ubus call system board 2>/dev/null | jsonfilter -e '@.board_name' 2>/dev/null || true
+}
+
+board_kind()
+{
+    case "$(board_name)" in
+        mikrotik,routerboard-952ui-5ac2nd) echo swconfig ;;
+        mikrotik,hap-ac2|mikrotik,hap-ac3) echo dsa ;;
+        *) return 1 ;;
+    esac
+}
+
+port_device()
+{
+    port="$1"
+    case "$(board_kind 2>/dev/null || true):$port" in
+        dsa:port1) echo wan ;;
+        dsa:port2) echo lan1 ;;
+        dsa:port3) echo lan2 ;;
+        dsa:port4) echo lan3 ;;
+        dsa:port5) echo lan4 ;;
+        swconfig:port1) echo eth1 ;;
+        swconfig:port2|swconfig:port3|swconfig:port4|swconfig:port5) echo eth0 ;;
+        *) return 1 ;;
+    esac
+}
+
+switch_port()
+{
+    case "$1" in
+        port2) echo 4 ;;
+        port3) echo 3 ;;
+        port4) echo 2 ;;
+        port5) echo 1 ;;
+        *) return 1 ;;
+    esac
+}
+
+role_of()
+{
+    value="$(uci_get "$1_role")"
+    valid_role "$value" || {
+        case "$1" in port1) value=wan ;; port2|port3|port4) value=lan ;; port5) value=off ;; esac
+    }
+    printf '%s\n' "$value"
+}
+
+dtd_of()
+{
+    value="$(uci_get "$1_dtd")"
+    [ "$value" = 1 ] || value=0
+    printf '%s\n' "$value"
+}
+
+count_role()
+{
+    wanted="$1"; count=0
+    for port in port1 port2 port3 port4 port5; do
+        [ "$(role_of "$port")" = "$wanted" ] && count=$((count + 1))
+    done
+    printf '%s\n' "$count"
+}
+
+validate_roles()
+{
+    board_kind >/dev/null 2>&1 || { echo 'unsupported board' >&2; return 1; }
+    [ "$(count_role lan)" -gt 0 ] || { echo 'at least one Ethernet port must remain LAN' >&2; return 1; }
+
+    wifi_device="$(wifi_wan_device 2>/dev/null)"
+    wifi_rc=$?
+    if [ "$wifi_rc" -eq 2 ]; then
+        echo 'both AREDN radios are configured as WAN clients; only one radio may own logical WAN 1' >&2
+        return 1
+    fi
+    if [ "$wifi_rc" -eq 0 ]; then
+        [ "$(count_role wan)" -eq 0 ] || { echo "WAN 1 is owned by Wi-Fi client $wifi_device; no Ethernet port may be assigned to WAN 1" >&2; return 1; }
+    elif [ "$(uci_get wan_enable)" != 0 ]; then
+        [ "$(count_role wan)" -gt 0 ] || { echo 'WAN 1 is enabled but no Ethernet port is assigned to WAN 1' >&2; return 1; }
+    fi
+
+    if [ "$(uci_get wan2_enable)" = 1 ]; then
+        [ "$(count_role wan2)" -gt 0 ] || { echo 'WAN 2 is enabled but no Ethernet port is assigned to WAN 2' >&2; return 1; }
+    fi
+}
+
+acquire_lock()
+{
+    if mkdir "$LOCK_DIR" 2>/dev/null; then printf '%s\n' "$$" > "$LOCK_DIR/pid"; return 0; fi
+    old="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+    case "$old" in ''|*[!0-9]*) ;; *) kill -0 "$old" 2>/dev/null && return 1 ;; esac
+    rm -rf "$LOCK_DIR"
+    mkdir "$LOCK_DIR" 2>/dev/null || return 1
+    printf '%s\n' "$$" > "$LOCK_DIR/pid"
+}
+
+write_state()
+{
+    status="$1"; message="$2"; token="$(cat "$PENDING" 2>/dev/null || true)"; deadline="$(cat "$DEADLINE" 2>/dev/null || true)"
+    valid_uint "$deadline" || deadline=0
+    tmp=$STATE_FILE.tmp.$$
+    printf '{"status":"%s","message":"%s","enabled":%s,"applied":%s,"pending_token":"%s","rollback_deadline":%s,"board":"%s","time":"%s"}\n' \
+        "$(json_escape "$status")" "$(json_escape "$message")" \
+        "$([ "$(uci_get port_roles_enabled)" = 1 ] && echo true || echo false)" \
+        "$([ -e "$MARKER" ] && echo true || echo false)" \
+        "$(json_escape "$token")" "$deadline" "$(json_escape "$(board_name)")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+backup_once()
+{
+    [ -d "$BACKUP_DIR" ] && return 0
+    mkdir -p "$BACKUP_DIR" || return 1
+    for name in $FILES; do
+        if [ -e "$INCLUDE_DIR/$name" ]; then
+            cp -p "$INCLUDE_DIR/$name" "$BACKUP_DIR/$name" || return 1
+        else
+            : > "$BACKUP_DIR/$name.absent"
+        fi
+    done
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$BACKUP_DIR/created"
+}
+
+restore_backups()
+{
+    [ -d "$BACKUP_DIR" ] || return 0
+    for name in $FILES; do
+        if [ -e "$BACKUP_DIR/$name.absent" ]; then
+            rm -f "$INCLUDE_DIR/$name"
+        elif [ -e "$BACKUP_DIR/$name" ]; then
+            cp -p "$BACKUP_DIR/$name" "$INCLUDE_DIR/$name" || return 1
+        fi
+    done
+}
+
+append_bridge_port()
+{
+    file="$1"; port="$2"; suffix="$3"
+    printf "\tlist ports '%s:%s'\n" "$port" "$suffix" >> "$file"
+}
+
+write_network_file()
+{
+    type="$1"; vlan="$2"; file="$INCLUDE_DIR/$type.network.user"
+
+    # AREDN Wi-Fi client mode owns the existing logical interface named wan.
+    # node-setup deliberately ignores wan.network.user in that mode, so remove
+    # our Ethernet WAN override and let AREDN generate wan -> wlan0/wlan1.
+    if [ "$type" = wan ]; then
+        wifi_wan_device >/dev/null 2>&1
+        wifi_rc=$?
+        if [ "$wifi_rc" -eq 0 ]; then
+            rm -f "$file"
+            return 0
+        fi
+        [ "$wifi_rc" -ne 2 ] || return 1
+    fi
+
+    have_ports=1
+    if [ "$type" = dtdlink ]; then
+        have_ports=0
+        for p in port1 port2 port3 port4 port5; do [ "$(dtd_of "$p")" = 1 ] && have_ports=1; done
+    elif [ "$(count_role "$type")" -eq 0 ]; then
+        have_ports=0
+    fi
+    case "$type" in
+        lan)
+            cat > "$file" <<EOF_LAN
+# Managed by aredn-multiwan. Restore through wan-port-manager.
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	option macaddr '<lan_mac>'
+$([ "$have_ports" = 1 ] && printf "\tlist ports 'br0.$vlan'" || printf "\toption bridge_empty '1'")
+
+config interface 'lan'
+	option device 'br-lan'
+	option proto '<lan_proto>'
+	option ipaddr '<lan_ip>'
+	option netmask '<lan_mask>'
+EOF_LAN
+            ;;
+        wan)
+            cat > "$file" <<EOF_WAN
+# Managed by aredn-multiwan. Restore through wan-port-manager.
+config device
+	option name 'br-wan'
+	option type 'bridge'
+	option macaddr '<wan_mac>'
+$([ "$have_ports" = 1 ] && printf "\tlist ports 'br0.$vlan'" || printf "\toption bridge_empty '1'")
+
+config interface 'wan'
+	option device 'br-wan'
+	option proto '<wan_proto>'
+	option ipaddr '<wan_ip>'
+	option netmask '<wan_mask>'
+	option gateway '<wan_gw>'
+	option ip4table '101'
+	option metric '10'
+EOF_WAN
+            ;;
+        dtdlink)
+            cat > "$file" <<EOF_DTD
+# Managed by aredn-multiwan. Restore through wan-port-manager.
+config device
+	option name 'br-dtdlink'
+	option type 'bridge'
+	option macaddr '<dtdlink_mac>'
+$([ "$have_ports" = 1 ] && printf "\tlist ports 'br0.$vlan'" || printf "\toption bridge_empty '1'")
+
+config interface 'dtdlink'
+	option device 'br-dtdlink'
+	option proto 'static'
+	option ipaddr '<dtdlink_ip>'
+	option netmask '255.0.0.0'
+EOF_DTD
+            ;;
+    esac
+}
+
+write_swconfig()
+{
+    file="$INCLUDE_DIR/swconfig"
+    cat > "$file" <<'EOF_SW_HEAD'
+# Managed by aredn-multiwan for the hAP ac lite.
+config switch
+	option name 'switch0'
+	option reset '1'
+	option enable_vlan '1'
+
+EOF_SW_HEAD
+    for spec in '3 lan' '2 dtd' '4 wan' '5 wan2'; do
+        set -- $spec; vlan="$1"; role="$2"; ports='0t'
+        for p in port2 port3 port4 port5; do
+            sw="$(switch_port "$p")"
+            if [ "$role" = dtd ]; then
+                [ "$(dtd_of "$p")" = 1 ] && ports="$ports ${sw}t"
+            elif [ "$(role_of "$p")" = "$role" ]; then
+                ports="$ports $sw"
+            fi
+        done
+        case "$ports" in '0t') continue ;; esac
+        cat >> "$file" <<EOF_SW_VLAN
+config switch_vlan
+	option device 'switch0'
+	option vlan '$vlan'
+	option ports '$ports'
+
+EOF_SW_VLAN
+    done
+    cp "$file" "$INCLUDE_DIR/swconfig.user"
+}
+
+write_bridge_config()
+{
+    kind="$(board_kind)"; file="$INCLUDE_DIR/bridge.network.user"
+    cat > "$file" <<'EOF_BRIDGE'
+# Managed by aredn-multiwan. Physical port roles are stored in /etc/config.mesh/aredn.
+config device
+	option name 'br0'
+	option type 'bridge'
+	option vlan_filtering '1'
+EOF_BRIDGE
+    if [ "$kind" = dsa ]; then
+        for p in port1 port2 port3 port4 port5; do
+            printf "\tlist ports '%s'\n" "$(port_device "$p")" >> "$file"
+        done
+    else
+        printf "\tlist ports 'eth0'\n\tlist ports 'eth1'\n" >> "$file"
+    fi
+
+    for spec in '2 dtd' '3 lan' '4 wan' '5 wan2'; do
+        set -- $spec; vlan="$1"; role="$2"; tmp="$STATE_DIR/vlan.$vlan.$$"; : > "$tmp"
+        if [ "$kind" = dsa ]; then
+            for p in port1 port2 port3 port4 port5; do
+                dev="$(port_device "$p")"
+                if [ "$role" = dtd ]; then
+                    [ "$(dtd_of "$p")" = 1 ] && printf '%s|t\n' "$dev" >> "$tmp"
+                elif [ "$(role_of "$p")" = "$role" ]; then
+                    printf '%s|u\n' "$dev" >> "$tmp"
+                fi
+            done
+        else
+            switch_used=0
+            for p in port2 port3 port4 port5; do
+                if [ "$role" = dtd ]; then
+                    [ "$(dtd_of "$p")" = 1 ] && switch_used=1
+                elif [ "$(role_of "$p")" = "$role" ]; then
+                    switch_used=1
+                fi
+            done
+            [ "$switch_used" = 1 ] && printf 'eth0|t\n' >> "$tmp"
+            if [ "$role" = dtd ]; then
+                [ "$(dtd_of port1)" = 1 ] && printf 'eth1|t\n' >> "$tmp"
+            elif [ "$(role_of port1)" = "$role" ]; then
+                printf 'eth1|u\n' >> "$tmp"
+            fi
+        fi
+        if [ -s "$tmp" ]; then
+            printf "\nconfig bridge-vlan\n\toption device 'br0'\n\toption vlan '%s'\n" "$vlan" >> "$file"
+            while IFS='|' read -r dev suffix; do append_bridge_port "$file" "$dev" "$suffix"; done < "$tmp"
+        fi
+        rm -f "$tmp"
+    done
+
+    if [ "$(uci_get wan2_enable)" = 1 ] && [ "$(count_role wan2)" -gt 0 ]; then
+        cat >> "$file" <<'EOF_WAN2'
+
+config device
+	option name 'br-wan2'
+	option type 'bridge'
+	list ports 'br0.5'
+
+config interface 'wan2'
+	option device 'br-wan2'
+	option proto 'dhcp'
+	option defaultroute '1'
+	option peerdns '0'
+	option metric '20'
+	option ip4table '102'
+EOF_WAN2
+    fi
+}
+
+write_managed_files()
+{
+    write_bridge_config || return 1
+    write_network_file lan 3 || return 1
+    write_network_file wan 4 || return 1
+    write_network_file dtdlink 2 || return 1
+    if [ "$(board_kind)" = swconfig ]; then
+        write_swconfig || return 1
+    else
+        # DSA targets do not consume the legacy swconfig include.
+        : > "$INCLUDE_DIR/swconfig"
+        rm -f "$INCLUDE_DIR/swconfig.user"
+    fi
+    transport="$(wan_transport)" || return 1
+    printf 'board=%s\nversion=6\nwan_transport=%s\n' "$(board_name)" "$transport" > "$MARKER"
+}
+
+find_zone()
+{
+    wanted="$1"; i=0
+    while name="$(uci -q get "firewall.@zone[$i].name" 2>/dev/null)"; do
+        [ "$name" = "$wanted" ] && { printf '@zone[%s]\n' "$i"; return 0; }
+        i=$((i + 1))
+    done
+    return 1
+}
+
+runtime_extras()
+{
+    zone="$(find_zone wan 2>/dev/null || true)"
+    have_wan2=0
+    [ "$(uci_get wan2_enable)" = 1 ] && [ "$(count_role wan2)" -gt 0 ] && have_wan2=1
+    if [ -n "$zone" ]; then
+        if [ "$have_wan2" = 1 ]; then
+            if ! uci -q get "firewall.$zone.network" 2>/dev/null | tr ' ' '\n' | grep -qx wan2; then
+                uci add_list "firewall.$zone.network=wan2"
+            fi
+        else
+            uci -q del_list "firewall.$zone.network=wan2" >/dev/null 2>&1 || true
+        fi
+        uci commit firewall
+    fi
+    if [ "$have_wan2" = 1 ]; then
+        if ! uci -q get dhcp.wan2 >/dev/null 2>&1; then uci set dhcp.wan2=dhcp; fi
+        uci set dhcp.wan2.interface=wan2
+        uci set dhcp.wan2.ignore=1
+    else
+        uci -q delete dhcp.wan2 >/dev/null 2>&1 || true
+    fi
+    uci commit dhcp
+    /etc/init.d/firewall reload >/dev/null 2>&1 || true
+    /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+}
+
+regenerate_network()
+{
+    mkdir -p /tmp/wan-sla
+    touch /tmp/wan-sla/inhibit
+    /usr/local/bin/wan3-manager proxy-stop >/dev/null 2>&1 || true
+    /usr/local/bin/node-setup >/dev/null 2>&1 || return 1
+    /etc/init.d/network reload >/dev/null 2>&1 || return 1
+    [ "${POLLYWAN_TEST_MODE:-0}" = 1 ] || sleep 3
+    runtime_extras
+    /usr/local/bin/wan-route-cache all >/dev/null 2>&1 || true
+    /usr/local/bin/wan-tunnel-guard apply >/dev/null 2>&1 || true
+    rm -f /tmp/wan-sla/inhibit
+    if [ "${POLLYWAN_TEST_MODE:-0}" = 1 ]; then
+        /usr/local/bin/wan-sla once >/dev/null 2>&1 || true
+    else
+        /usr/local/bin/wan-sla once >/dev/null 2>&1 &
+    fi
+}
+
+cancel_timer()
+{
+    pid="$(cat "$TIMER_PID" 2>/dev/null || true)"
+    case "$pid" in ''|*[!0-9]*) ;; *) kill "$pid" >/dev/null 2>&1 || true ;; esac
+    rm -f "$TIMER_PID" "$PENDING" "$DEADLINE"
+}
+
+schedule_rollback()
+{
+    token="$1"; timeout="$(uci_get port_rollback_timeout)"; valid_uint "$timeout" || timeout=180
+    [ "$timeout" -ge 60 ] || timeout=60
+    [ "$timeout" -le 900 ] || timeout=900
+    cancel_timer
+    printf '%s\n' "$token" > "$PENDING"
+    deadline=$(( $(date +%s) + timeout ))
+    printf '%s\n' "$deadline" > "$DEADLINE"
+    if [ "${POLLYWAN_TEST_MODE:-0}" = 1 ]; then
+        rm -f "$TIMER_PID"
+        return 0
+    fi
+    (
+        sleep "$timeout"
+        /usr/local/bin/wan-port-manager rollback "$token" timer
+    ) >/dev/null 2>&1 &
+    printf '%s\n' "$!" > "$TIMER_PID"
+}
+
+apply_roles()
+{
+    [ "$(uci_get enabled)" = 1 ] || { echo 'PollyWAN must be enabled before applying Ethernet roles' >&2; return 1; }
+    [ "$(uci_get port_roles_enabled)" = 1 ] || { echo 'Ethernet role management is disabled' >&2; return 1; }
+    validate_roles || return 1
+    backup_once || return 1
+    write_state applying 'Writing managed Ethernet role configuration'
+    write_managed_files || return 1
+    token="$(date +%s)-$$"
+    schedule_rollback "$token"
+    if ! regenerate_network; then
+        log 'network regeneration failed; restoring previous AREDN port configuration'
+        restore_backups || true
+        /usr/local/bin/node-setup >/dev/null 2>&1 || true
+        /etc/init.d/network reload >/dev/null 2>&1 || true
+        cancel_timer
+        rm -f "$MARKER"
+        rm -rf "$BACKUP_DIR"
+        write_state error 'Ethernet role application failed and was rolled back'
+        return 1
+    fi
+    write_state pending "Ethernet roles applied; confirm before automatic rollback at token $token"
+    printf '%s\n' "$token"
+}
+
+confirm_roles()
+{
+    token="${1:-}"; saved="$(cat "$PENDING" 2>/dev/null || true)"
+    [ -n "$saved" ] || { write_state ready 'No Ethernet role rollback is pending'; return 0; }
+    [ "$token" = "$saved" ] || { echo 'rollback token does not match' >&2; return 1; }
+    cancel_timer
+    write_state ready 'Ethernet roles confirmed'
+}
+
+restore_roles()
+{
+    reason="${1:-restore}"
+    mkdir -p /tmp/wan-sla
+    touch /tmp/wan-sla/inhibit
+    cancel_timer
+    /usr/local/bin/wan3-manager proxy-stop >/dev/null 2>&1 || true
+    restore_backups || return 1
+    rm -f "$MARKER"
+    /usr/local/bin/node-setup >/dev/null 2>&1 || return 1
+    /etc/init.d/network reload >/dev/null 2>&1 || return 1
+    [ "${POLLYWAN_TEST_MODE:-0}" = 1 ] || sleep 3
+    /usr/local/bin/wan3-manager restore >/dev/null 2>&1 || true
+    /usr/local/bin/wan-tunnel-guard apply >/dev/null 2>&1 || true
+    rm -f /tmp/wan-sla/inhibit
+    rm -rf "$BACKUP_DIR"
+    write_state restored "AREDN Ethernet configuration restored ($reason)"
+}
+
+rollback_roles()
+{
+    token="${1:-}"; origin="${2:-manual}"; saved="$(cat "$PENDING" 2>/dev/null || true)"
+    [ -n "$saved" ] || return 0
+    [ "$token" = "$saved" ] || return 1
+    restore_roles "automatic rollback: $origin"
+}
+
+carrier_state()
+{
+    port="$1"; kind="$(board_kind 2>/dev/null || true)"
+    if [ "$kind" = dsa ] || [ "$port" = port1 ]; then
+        dev="$(port_device "$port" 2>/dev/null || true)"
+        [ -n "$dev" ] && [ "$(cat "/sys/class/net/$dev/carrier" 2>/dev/null || true)" = 1 ] && echo 1 || echo 0
+    else
+        sw="$(switch_port "$port")"
+        swconfig dev switch0 port "$sw" get link 2>/dev/null | grep -q 'link:up' && echo 1 || echo 0
+    fi
+}
+
+ports_tsv()
+{
+    for port in port1 port2 port3 port4 port5; do
+        printf '%s|Port %s|%s|%s|%s|%s\n' "$port" "${port#port}" "$(port_device "$port")" "$(carrier_state "$port")" "$(role_of "$port")" "$(dtd_of "$port")"
+    done
+}
+
+gps_status()
+{
+    time_enable="$(uci -q get aredn.@time[0].gps_enable 2>/dev/null || true)"
+    mesh_time_enable="$(uci -c /etc/config.mesh -q get aredn.@time[0].gps_enable 2>/dev/null || true)"
+    device=none
+    [ -e /dev/ttyACM0 ] && device=/dev/ttyACM0
+    [ "$device" = none ] && [ -e /dev/ttyUSB0 ] && device=/dev/ttyUSB0
+    pid="$(pidof gpsd 2>/dev/null || true)"
+    printf 'time_gps=%s|mesh_time_gps=%s|device=%s|gpsd_pid=%s\n' "$time_enable" "$mesh_time_enable" "$device" "$pid"
+}
+
+reconcile()
+{
+    if [ "$(uci_get enabled)" = 1 ] && [ "$(uci_get port_roles_enabled)" = 1 ] && [ -e "$MARKER" ]; then
+        current="$(wan_transport 2>/dev/null || true)"
+        saved="$(sed -n 's/^wan_transport=//p' "$MARKER" 2>/dev/null | head -n 1)"
+        if [ -n "$saved" ] && [ "$saved" != "$current" ]; then
+            write_state attention "WAN 1 transport changed from $saved to $current; review and apply Ethernet roles with rollback"
+            return 0
+        fi
+        runtime_extras
+        write_state ready "Managed Ethernet roles are active; WAN 1 transport is $current"
+    else
+        write_state idle 'Ethernet role management is inactive'
+    fi
+}
+
+status()
+{
+    [ -r "$STATE_FILE" ] || write_state idle 'Ethernet role manager has not changed the node'
+    cat "$STATE_FILE"
+}
+
+COMMAND="${1:-status}"
+case "$COMMAND" in
+    status) status ;;
+    ports) ports_tsv ;;
+    gps-status) gps_status ;;
+    wan-transport) wan_transport ;;
+    reconcile) reconcile ;;
+    validate) validate_roles ;;
+    apply)
+        acquire_lock || exit 3
+        trap 'rm -rf "$LOCK_DIR"' EXIT HUP INT TERM
+        apply_roles
+        ;;
+    confirm) confirm_roles "${2:-}" ;;
+    rollback)
+        acquire_lock || exit 3
+        trap 'rm -rf "$LOCK_DIR"' EXIT HUP INT TERM
+        rollback_roles "${2:-}" "${3:-manual}"
+        ;;
+    restore|remove|disable)
+        acquire_lock || exit 3
+        trap 'rm -rf "$LOCK_DIR"' EXIT HUP INT TERM
+        if [ -e "$MARKER" ] || [ -d "$BACKUP_DIR" ]; then restore_roles "$COMMAND"; else write_state idle 'No managed Ethernet roles were applied'; fi
+        ;;
+    *) echo "usage: $0 {status|ports|gps-status|wan-transport|reconcile|validate|apply|confirm TOKEN|rollback TOKEN [ORIGIN]|restore}" >&2; exit 2 ;;
+esac

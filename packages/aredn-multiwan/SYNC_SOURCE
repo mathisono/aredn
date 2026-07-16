@@ -1,0 +1,9 @@
+standalone=https://github.com/mathisono/AREDN_PollyWAN.git
+standalone_branch=agent/pollywan-r6
+integration=https://github.com/mathisono/aredn.git
+integration_branch=agent/pollywan-r6
+integration_path=packages/aredn-multiwan
+sync_contract=standalone-root-equals-integration-subtree
+content_manifest_algorithm=sha256-of-lines-normalized-mode-path-file_sha256
+content_manifest_excludes=SYNC_SOURCE
+content_manifest_sha256=87a25c8eaa60fa1287954184ac51d26ceca8585d4520901f6850f3261d4a9b36

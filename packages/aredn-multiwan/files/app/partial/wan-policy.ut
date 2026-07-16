@@ -1,0 +1,25 @@
+{%
+function readPolicyStatus() { const v = fs.readfile("/tmp/wan-sla/status.json"); if (!v) return null; try { return json(v); } catch (_) { return null; } }
+function wan1Transport()
+{
+    const radio0 = uciMesh.get("setup", "globals", "radio0_mode") || "";
+    const radio1 = uciMesh.get("setup", "globals", "radio1_mode") || "";
+    if (radio0 === "wan" && radio1 === "wan") return "invalid radios";
+    if (radio0 === "wan") return "Wi-Fi wlan0";
+    if (radio1 === "wan") return "Wi-Fi wlan1";
+    return "Ethernet";
+}
+const s = readPolicyStatus();
+const enabled = uciMesh.get("aredn", "multiwan", "enabled") === "1";
+const active = s?.active || uciMesh.get("aredn", "multiwan", "active") || "wan";
+%}
+<div id="wan-policy" class="ctrl" hx-get="status/e/wan-policy" hx-target="#ctrl-modal">
+    <div class="section-title">WAN selection and Mesh WAN policy</div>
+    <div class="section cols">
+        <div><div class="t">{{enabled ? uciMesh.get("aredn", "multiwan", "selection_mode") || "manual" : "disabled"}}</div><div class="s">controller</div></div>
+        <div><div class="t">{{active}}</div><div class="s">selected path · {{s?.selected_bin || "unknown"}}</div></div>
+        <div><div class="t">{{wan1Transport()}}</div><div class="s">WAN 1 transport · table 101</div></div>
+        <div><div class="t">{{s?.table28_published ? "published" : "withdrawn"}}</div><div class="s">Babel table 28</div></div>
+        <div><div class="t">{{s?.remote_mesh_default ? "available" : "absent"}}</div><div class="s">remote table 22</div></div>
+    </div>
+</div>

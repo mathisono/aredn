@@ -1,33 +1,15 @@
 {%
-/* Phone USB tether status card. The editor itself is protected by an /e/ route. */
-function readUsbWanState()
-{
-    const value = fs.readfile("/tmp/wan3/state.json");
-    if (!value) return null;
-    try { return json(value); } catch (_) { return null; }
-}
-const usbWanBoards = {
-    "mikrotik,routerboard-952ui-5ac2nd": true,
-    "mikrotik,hap-ac2": true,
-    "mikrotik,hap-ac3": true
-};
-if (auth.isAdmin && usbWanBoards[hardware.getBoardModel().id]) {
-    const enabled = uciMesh.get("aredn", "multiwan", "wan3_enable") === "1";
-    const active = (uciMesh.get("aredn", "multiwan", "active") || "wan") === "wan3";
-    const proxyEnabled = uciMesh.get("aredn", "multiwan", "wan3_proxy_enable") !== "0";
-    const state = readUsbWanState();
-    let iface = null;
-    try { iface = ubus.call("network.interface.wan3", "status"); } catch (_) {}
-    const addresses = (iface && iface["ipv4-address"]) || [];
-    const address = length(addresses) ? addresses[0].address : "";
-    const device = iface?.l3_device || iface?.device || state?.device || "";
+let iface = null;
+try { iface = ubus.call("network.interface.wan3", "status"); } catch (_) {}
+const addresses = (iface && iface["ipv4-address"]) || [];
+const enabled = uciMesh.get("aredn", "multiwan", "wan3_enable") === "1";
 %}
 <div id="usb-wan" class="ctrl" hx-get="status/e/usb-wan" hx-target="#ctrl-modal">
-    <div class="section-title">Phone USB Tether</div>
+    <div class="section-title">WAN 3 · phone USB tether</div>
     <div class="section cols">
-        <div><div class="t">{{enabled ? iface?.up ? "up" : "waiting" : "disabled"}}</div><div class="s">wan3 · USB RNDIS/CDC{{device ? " · " + device : ""}}</div></div>
-        <div><div class="t">{{address || "-"}}</div><div class="s">{{active ? "active Internet path" : "standby"}}</div></div>
-        <div><div class="t">{{proxyEnabled ? fs.access("/var/run/wan3-redsocks.pid") ? "on" : "off" : "disabled"}}</div><div class="s">hAP PdaNet proxy</div></div>
+        <div><div class="t">{{enabled ? iface?.up ? "up" : "waiting" : "disabled"}}</div><div class="s">RNDIS / CDC input</div></div>
+        <div><div class="t">{{length(addresses) ? addresses[0].address : "-"}}</div><div class="s">wan3 IPv4</div></div>
+        <div><div class="t">{{fs.access("/var/run/wan3-redsocks.pid") ? "running" : "off"}}</div><div class="s">PdaNet proxy</div></div>
+        <div><div class="t">unchanged</div><div class="s">serial GPS ownership</div></div>
     </div>
 </div>
-{% } %}

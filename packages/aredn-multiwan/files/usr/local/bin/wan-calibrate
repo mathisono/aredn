@@ -7,9 +7,10 @@
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License version 3.
 #
-# Link calibration is intentionally a manual, administrator-initiated action.
-# The destination is read from persistent AREDN configuration and is never
-# accepted from the HTTP request that starts this program.
+# Calibration starts either from the authenticated administrator UI (manual)
+# or from the explicitly enabled adaptive SLA controller (automatic). The
+# destination is always read from persistent AREDN configuration and is never
+# accepted from the request which starts this program.
 
 set -u
 
@@ -19,6 +20,7 @@ export PATH LC_ALL=C
 STATE_DIR=/tmp/wan-calibration
 LOCK_DIR="$STATE_DIR/.lock"
 INTERFACE="${1:-}"
+TRIGGER="${2:-manual}"
 CONFIG_PACKAGE=aredn
 CONFIG_SECTION=multiwan
 
@@ -27,6 +29,14 @@ mkdir -p "$STATE_DIR" || exit 1
 case "$INTERFACE" in
     wan|wan2|wan3) ;;
     *) logger -t wan-calibrate "Rejected invalid interface: $INTERFACE"; exit 2 ;;
+esac
+case "$TRIGGER" in
+    manual) ;;
+    automatic)
+        [ "$(uci -c /etc/config.mesh -q get "$CONFIG_PACKAGE.$CONFIG_SECTION.enabled" 2>/dev/null || true)" = 1 ] || exit 2
+        [ "$(uci -c /etc/config.mesh -q get "$CONFIG_PACKAGE.$CONFIG_SECTION.selection_mode" 2>/dev/null || true)" = adaptive ] || exit 2
+        ;;
+    *) logger -t wan-calibrate "Rejected invalid trigger: $TRIGGER"; exit 2 ;;
 esac
 
 STATUS_FILE="$STATE_DIR/$INTERFACE.status.json"
@@ -89,15 +99,15 @@ now_text() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 write_status()
 {
     status="$1"; message="$2"; stage="${3:-}"; retry_after="${4:-0}"; tmp="$STATUS_FILE.tmp.$$"
-    printf '{"status":"%s","interface":"%s","message":"%s","stage":"%s","timestamp":%s,"time":"%s","retry_after":%s}\n' \
-        "$(json_string "$status")" "$(json_string "$INTERFACE")" "$(json_string "$message")" "$(json_string "$stage")" \
-        "$(now_epoch)" "$(now_text)" "$retry_after" > "$tmp" && mv "$tmp" "$STATUS_FILE"
+    printf '{"status":"%s","interface":"%s","trigger":"%s","message":"%s","stage":"%s","timestamp":%s,"time":"%s","retry_after":%s}\n' \
+        "$(json_string "$status")" "$(json_string "$INTERFACE")" "$(json_string "$TRIGGER")" \
+        "$(json_string "$message")" "$(json_string "$stage")" "$(now_epoch)" "$(now_text)" "$retry_after" > "$tmp" && mv "$tmp" "$STATUS_FILE"
 }
 
 fail()
 {
     message="$1"
-    logger -t wan-calibrate "$INTERFACE: $message"
+    logger -t wan-calibrate "$INTERFACE/$TRIGGER: $message"
     write_status error "$message"
     exit 1
 }
@@ -204,7 +214,7 @@ measure()
     OUTPUT="$(curl "$@" "$CDN_URL" 2>"$CURL_ERROR")"
     CURL_RC=$?
     if [ "$CURL_RC" -ne 0 ]; then
-        logger -t wan-calibrate "$INTERFACE curl failure: $(tr '\n' ' ' < "$CURL_ERROR" | cut -c1-160)"
+        logger -t wan-calibrate "$INTERFACE/$TRIGGER curl failure: $(tr '\n' ' ' < "$CURL_ERROR" | cut -c1-160)"
         rm -f "$CURL_ERROR"
         fail "Calibration object sample download failed"
     fi
@@ -234,12 +244,12 @@ BIN="$(awk -v value="$SAMPLE_MBPS" 'BEGIN { if (value <= 5.0) print "low"; else 
 RESULT_TMP="$RESULT_FILE.tmp.$$"
 TIMESTAMP="$(now_epoch)"
 TIME_TEXT="$(now_text)"
-printf '{"status":"complete","interface":"%s","device":"%s","source":"%s","gateway":"%s","timestamp":%s,"time":"%s","bytes":%s,"sample_bytes":%s,"seconds":%s,"sample_seconds":%s,"mbps":%s,"bin":"%s","remote_ip":"%s","cdn_host":"%s","provider":"%s","proxy_enabled":%s,"proxy_host":"%s"}\n' \
-    "$(json_string "$INTERFACE")" "$(json_string "$DEVICE")" "$(json_string "$SOURCE")" "$(json_string "$GATEWAY")" \
+printf '{"status":"complete","interface":"%s","trigger":"%s","device":"%s","source":"%s","gateway":"%s","timestamp":%s,"time":"%s","bytes":%s,"sample_bytes":%s,"seconds":%s,"sample_seconds":%s,"mbps":%s,"bin":"%s","remote_ip":"%s","cdn_host":"%s","provider":"%s","proxy_enabled":%s,"proxy_host":"%s"}\n' \
+    "$(json_string "$INTERFACE")" "$(json_string "$TRIGGER")" "$(json_string "$DEVICE")" "$(json_string "$SOURCE")" "$(json_string "$GATEWAY")" \
     "$TIMESTAMP" "$TIME_TEXT" "$TOTAL_BYTES" "$BYTES_INTEGER" "$TOTAL_SECONDS" "$SAMPLE_SECONDS" "$SAMPLE_MBPS" "$BIN" \
     "$(json_string "$REMOTE_IP")" "$(json_string "$CDN_HOST")" "$(json_string "$CDN_PROVIDER")" "$PROXY_ENABLED" "$(json_string "$PROXY_HOST")" > "$RESULT_TMP" || fail "Could not write calibration result"
 mv "$RESULT_TMP" "$RESULT_FILE" || fail "Could not publish calibration result"
 STATUS_TMP="$STATUS_FILE.tmp.$$"
 cp "$RESULT_FILE" "$STATUS_TMP" && mv "$STATUS_TMP" "$STATUS_FILE" || fail "Could not publish calibration status"
-logger -t wan-calibrate "$INTERFACE: $SAMPLE_MBPS Mbit/s ($BIN), $TOTAL_BYTES bytes from $CDN_HOST"
+logger -t wan-calibrate "$INTERFACE/$TRIGGER: $SAMPLE_MBPS Mbit/s ($BIN), $TOTAL_BYTES bytes from $CDN_HOST"
 exit 0

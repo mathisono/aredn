@@ -1,0 +1,31 @@
+{%
+function readPortState() { const v = fs.readfile("/tmp/wan-port-manager/state.json"); if (!v) return null; try { return json(v); } catch (_) { return null; } }
+function wifiWanInfo()
+{
+    const radio0 = uciMesh.get("setup", "globals", "radio0_mode") || "";
+    const radio1 = uciMesh.get("setup", "globals", "radio1_mode") || "";
+    if (radio0 === "wan" && radio1 === "wan") return { active: false, conflict: true, label: "invalid: both radios" };
+    if (radio0 === "wan") return { active: true, conflict: false, label: "Wi-Fi wlan0" };
+    if (radio1 === "wan") return { active: true, conflict: false, label: "Wi-Fi wlan1" };
+    return { active: false, conflict: false, label: "Ethernet" };
+}
+const s = readPortState();
+const wifiWan = wifiWanInfo();
+let wan1 = [];
+let wan2 = [];
+for (let i = 1; i <= 5; i++) {
+    const role = uciMesh.get("aredn", "multiwan", `port${i}_role`) || (i === 1 ? "wan" : i < 5 ? "lan" : "off");
+    if (!wifiWan.active && role === "wan") push(wan1, `P${i}`);
+    else if (role === "wan2") push(wan2, `P${i}`);
+}
+%}
+<div id="ethernet-ports" class="ctrl" hx-get="status/e/ethernet-ports" hx-target="#ctrl-modal">
+    <div class="section-title">hAP Ethernet roles</div>
+    <div class="section cols">
+        <div><div class="t">{{uciMesh.get("aredn", "multiwan", "port_roles_enabled") === "1" ? s?.pending_token ? "pending" : "enabled" : "AREDN defaults"}}</div><div class="s">role management</div></div>
+        <div><div class="t">{{wifiWan.label}}</div><div class="s">WAN 1 transport</div></div>
+        <div><div class="t">{{wifiWan.active ? "not Ethernet" : length(wan1) ? join(", ", wan1) : "none"}}</div><div class="s">WAN 1 ports</div></div>
+        <div><div class="t">{{length(wan2) ? join(", ", wan2) : "none"}}</div><div class="s">WAN 2 ports</div></div>
+        <div><div class="t">USB</div><div class="s">WAN 3 fixed</div></div>
+    </div>
+</div>

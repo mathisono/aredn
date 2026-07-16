@@ -1,5 +1,4 @@
 {%
-/* Standalone administrator page installed by the aredn-multiwan package. */
 const supportedBoards = {
     "mikrotik,routerboard-952ui-5ac2nd": true,
     "mikrotik,hap-ac2": true,
@@ -12,7 +11,7 @@ if (!auth.isAdmin) {
 }
 if (!supportedBoards[hardware.getBoardModel().id]) {
     response.statusCode = 404;
-    print("<div><b>The Multi-WAN package is not supported on this device.</b></div>");
+    print("<div><b>PollyWAN supports only the MikroTik hAP ac lite, hAP ac2, and hAP ac3.</b></div>");
     return;
 }
 %}

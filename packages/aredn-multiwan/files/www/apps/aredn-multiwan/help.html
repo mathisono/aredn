@@ -1,80 +1,31 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AREDN Multi-WAN setup</title>
-<style>
-body{font-family:system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;line-height:1.5;color:#1f2937}code,pre{background:#f3f4f6;border-radius:.3rem}code{padding:.1rem .25rem}pre{padding:1rem;overflow:auto}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d1d5db;padding:.45rem;text-align:left}.note{border-left:4px solid #f59e0b;padding:.5rem 1rem;background:#fffbeb}.ok{border-left:4px solid #10b981;padding:.5rem 1rem;background:#ecfdf5}h1,h2{line-height:1.2}</style>
-</head>
-<body>
-<h1>AREDN Multi-WAN and phone USB tether</h1>
-<p>This is an experimental, optional package for the MikroTik hAP ac lite, hAP ac2, and hAP ac3. Installing it does not enable multi-WAN. The existing AREDN WAN remains unchanged until an administrator enables the package and selects another path.</p>
-<div class="note"><strong>Before installation:</strong> check free overlay space, especially on the hAP ac lite. The package installs USB network drivers, redsocks, curl, and nftables dependencies as separate APKs.</div>
-
-<h2>Interfaces</h2>
-<table><thead><tr><th>Name</th><th>Purpose</th></tr></thead><tbody>
-<tr><td><code>wan</code></td><td>Existing AREDN WAN.</td></tr>
-<tr><td><code>wan2</code></td><td>Second Ethernet WAN when it has been configured separately.</td></tr>
-<tr><td><code>wan3</code></td><td>Android phone connected to the hAP USB host as an RNDIS, CDC Ethernet, or CDC NCM tether.</td></tr>
-</tbody></table>
-
-<h2>Required USB topology</h2>
-<pre>Android phone running PdaNet
-        |
-        | data-capable USB cable
-        v
-hAP USB host -> RNDIS/CDC network device -> wan3 DHCP
-        |
-        +-- optional PdaNet HTTP CONNECT proxy settings stored on the hAP</pre>
-<p>The hAP must first see a USB network adapter and obtain an IPv4 address on <code>wan3</code>. The PdaNet proxy is reached over that same USB network. A proxy address by itself is not enough when no USB network device or DHCP path exists.</p>
-
-<h2>PdaNet USB setup</h2>
-<ol>
-<li>Use a data-capable USB cable and connect the Android phone directly to the hAP USB host port.</li>
-<li>Open PdaNet+ and enable <strong>Activate USB Mode</strong>. Leave PdaNet running.</li>
-<li>Log in to AREDN. Open the application menu and select <strong>aredn-multiwan</strong>.</li>
-<li>Open <strong>Phone USB Tether</strong>, enable WAN 3, and leave the hAP USB interface set to <code>auto</code>.</li>
-<li>Enable <strong>Use PdaNet upstream proxy</strong> when required. Enter the proxy information on the hAP. Common values are <code>192.168.49.1</code>, TCP port <code>8000</code>, type HTTP CONNECT.</li>
-<li>Optional username and password fields are also stored and used by the hAP.</li>
-<li>Save. Wait for <code>wan3</code> to show an IPv4 address, then select <strong>Use phone USB tether now</strong>.</li>
-<li>Select <strong>Use WAN 1</strong> before unplugging the phone when practical.</li>
-</ol>
-<p>The package runs a private redsocks process with its own configuration, PID file, nftables table, and TCP listener on port <code>12346</code> by default. It does not stop or disable a separately configured stock redsocks service.</p>
-<div class="note"><strong>Proxy limitation:</strong> HTTP CONNECT carries TCP. General UDP, incoming connections, and port forwarding do not work through PdaNet proxy mode. UDP/443 is rejected so browsers normally fall back from QUIC/HTTP/3 to TCP/HTTPS. A standard routed Android USB tether can be used with the proxy disabled.</div>
-
-<h2>User-selected link calibration object</h2>
-<p>A logged-in administrator sets a descriptive label and a complete HTTPS object URL in <strong>WAN Link Calibration</strong>. The object is not hard-coded. Hurricane Electric/Hayward may be used, but any suitable administrator-selected HTTPS object is allowed.</p>
-<p>The object must use a valid certificate, include a DNS hostname and path, support byte ranges, return HTTP 206, contain at least 32 MiB, and avoid redirects. Embedded credentials, spaces, fragments, and custom ports are rejected. Saving a blank URL disables calibration.</p>
-<p>A calibration run can select only <code>wan</code>, <code>wan2</code>, or <code>wan3</code>; the run request cannot supply or replace the saved URL.</p>
-<ul><li>1 MiB initial sample</li><li>8 MiB when the path is near or above 5 Mbps</li><li>32 MiB when the path is near or above 30 Mbps</li></ul>
-<p>Maximum transfer is about 41 MiB. Results are <strong>low</strong> at 5 Mbps or less, <strong>medium</strong> above 5 through 30 Mbps, and <strong>fast</strong> above 30 Mbps. For <code>wan3</code>, calibration remains bound to the phone USB tether and directly uses the saved PdaNet proxy when enabled.</p>
-
-<h2>Verify from an authenticated shell</h2>
-<pre>apk info -e aredn-multiwan
-uci -c /etc/config.mesh show aredn.multiwan
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PollyWAN r6 setup</title><style>body{font-family:system-ui,sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;line-height:1.5;color:#1f2937}code,pre{background:#f3f4f6;border-radius:.3rem}code{padding:.1rem .25rem}pre{padding:1rem;overflow:auto}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d1d5db;padding:.45rem;text-align:left}.note{border-left:4px solid #f59e0b;padding:.5rem 1rem;background:#fffbeb}.ok{border-left:4px solid #10b981;padding:.5rem 1rem;background:#ecfdf5}</style></head><body>
+<h1>PollyWAN r6 for AREDN</h1>
+<p>PollyWAN is an optional package for the MikroTik hAP ac lite, hAP ac2, and hAP ac3. It regulates three local WAN candidates, integrates with AREDN Mesh WAN routing, and is disabled and inert after installation.</p>
+<h2>Inputs</h2><table><tr><th>Logical name</th><th>Input</th><th>Private table</th></tr><tr><td><code>wan</code></td><td>WAN 1: AREDN Wi-Fi client on <code>wlan0</code>/<code>wlan1</code>, or selected Ethernet <code>br-wan</code>.</td><td>101</td></tr><tr><td><code>wan2</code></td><td>Selected hAP Ethernet port(s).</td><td>102</td></tr><tr><td><code>wan3</code></td><td>Phone USB RNDIS/CDC tether.</td><td>103</td></tr><tr><td>Remote Mesh WAN</td><td>Babel-learned fallback, not a local candidate.</td><td>22</td></tr></table>
+<div class="note"><strong>Wi-Fi rule:</strong> AREDN Wi-Fi client mode keeps the logical interface name <code>wan</code>. Wi-Fi WAN and Ethernet WAN 1 cannot be active simultaneously. PollyWAN never changes radio mode and removes WAN 1 from the Ethernet role choices while Wi-Fi owns it.</div>
+<p>Use <strong>hAP Ethernet port roles</strong> to assign LAN, WAN 1, WAN 2, disabled, and tagged DtD VLAN 2. Applying starts a timed rollback; reconnect and select <strong>Confirm working</strong>.</p>
+<h2>Phone USB/PdaNet</h2><pre>Android phone -> data USB cable -> hAP USB host -> RNDIS/CDC -> wan3 DHCP
+                                                        -> optional HTTP CONNECT proxy</pre>
+<p>Enter the proxy address, TCP port, and optional credentials on the hAP. Common PdaNet values are <code>192.168.49.1:8000</code>. The proxy carries public IPv4 TCP, not general UDP or incoming connections.</p>
+<div class="ok"><strong>GPS safety:</strong> when WAN 3 is disabled, PollyWAN never opens <code>/dev/ttyACM0</code> or <code>/dev/ttyUSB0</code>, edits gpsd, changes AREDN GPS time/location, changes radio mode, or changes USB power. It searches only <code>/sys/class/net</code> after WAN 3 is explicitly enabled.</div>
+<h2>Adaptive selection</h2><p>Reachability is a hard gate. A user-selected HTTPS range object classifies each path as low (≤5 Mbps), medium (&gt;5–30 Mbps), or fast (&gt;30 Mbps). Better links require promotion hysteresis; hard failures demote immediately.</p>
+<h2>Mesh WAN and Babel</h2><p>Table 26 is the selected local default, table 27 its connected subnet, and table 28 is published only when the selected path is healthy and meets the mesh-share bin. Table 22 remains the remote Mesh WAN. A protocol-boot default is denied from Babel so only PollyWAN's qualified protocol-static table-28 route is advertised.</p>
+<h2>Tunnels</h2><p>WireGuard and <code>tun*</code> ingress may use AREDN mesh routes but is hard-blocked from local or remote Internet defaults. This policy is not a checkbox.</p>
+<h2>Verification</h2><pre>/usr/local/bin/wan-port-manager wan-transport
+/usr/local/bin/wan-port-manager status
+/usr/local/bin/wan-port-manager gps-status
+/usr/local/bin/wan-sla status
 /usr/local/bin/wan3-manager status
-ubus call network.interface.wan3 status
-ip -4 route show table main default
-ip -4 route show table 103
-cat /var/run/wan3-redsocks.pid
-nft list table inet aredn_wan3_proxy
-logread -e wan3-manager
-logread -e redsocks
-logread -e wan-calibrate</pre>
-<div class="ok"><strong>Healthy USB proxy state:</strong> <code>wan3</code> is up with an IPv4 address, table 103 has a default route, the main table points through the USB device when selected, a private redsocks PID exists, and the <code>aredn_wan3_proxy</code> nftables table is present.</div>
-
-<h2>Recovery and uninstall</h2>
-<pre>/usr/local/bin/wan3-manager select wan
-/etc/init.d/wan3-manager stop
-apk del aredn-multiwan</pre>
-<p>The package attempts to return to WAN 1 before removal. Saved <code>aredn.multiwan</code> settings are intentionally retained for a later reinstall. Existing sessions may not survive any WAN change.</p>
-
-<h2>Known unfinished work</h2>
-<ul>
-<li>The package can select and calibrate <code>wan2</code>, but does not yet create its physical hAP port/VLAN definition.</li>
-<li>Automatic SLA and speed-bin failover are not enabled yet.</li>
-<li>The package build and physical installation tests are the next development step.</li>
-</ul>
-</body>
-</html>
+ip -4 route show table 22
+ip -4 route show table 26
+ip -4 route show table 27
+ip -4 route show table 28
+ip -4 route show table 101
+/usr/local/bin/wan-tunnel-guard status</pre>
+<h2>Recovery</h2><pre>uci -c /etc/config.mesh set aredn.multiwan.enabled='0'
+uci -c /etc/config.mesh commit aredn
+/usr/local/bin/wan-port-manager restore
+/usr/local/bin/wan3-manager disable
+/etc/init.d/wan3-manager stop</pre>
+<p>See <code>/usr/share/doc/aredn-multiwan/</code> for complete setup, build, test, Wi-Fi WAN, GPS, and rollback instructions.</p>
+</body></html>

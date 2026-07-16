@@ -1,0 +1,9 @@
+*.apk
+*.ipk
+*.tar.gz
+/openwrt/
+/bin/
+/build_dir/
+/staging_dir/
+/tmp/
+.DS_Store

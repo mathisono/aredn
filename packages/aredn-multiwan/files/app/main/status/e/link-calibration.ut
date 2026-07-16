@@ -1,159 +1,99 @@
 {%
-/* Administrator-only bounded link calibration for WAN 1, WAN 2 and USB WAN. */
-function readCalibration(path)
-{
-    const value = fs.readfile(path);
-    if (!value) return null;
-    try { return json(value); } catch (_) { return null; }
-}
+const supportedBoards = { "mikrotik,routerboard-952ui-5ac2nd": true, "mikrotik,hap-ac2": true, "mikrotik,hap-ac3": true };
+if (!auth.isAdmin) { response.statusCode = 403; print("Administrator authentication required"); return; }
+if (!supportedBoards[hardware.getBoardModel().id]) { response.statusCode = 404; print("Link calibration is not available on this device"); return; }
 
-function validText(value, maxlen)
-{
-    return length(value || "") <= maxlen && !match(value || "", /[\r\n]/);
-}
-
-function parseCalibrationUrl(value)
+function readJson(path) { const v = fs.readfile(path); if (!v) return null; try { return json(v); } catch (_) { return null; } }
+function validText(value, maxlen) { return length(value || "") <= maxlen && !match(value || "", /[\r\n]/); }
+function parseUrl(value)
 {
     if (!value || length(value) > 1024 || match(value, /[\t\r\n ]/)) return null;
     const parsed = match(value, /^https:\/\/([A-Za-z0-9.-]+)\/[^#]+$/);
     if (!parsed) return null;
-
     const host = parsed[1];
     if (length(host) > 253 || substr(host, 0, 1) === "." || substr(host, -1) === "." || index(host, "..") !== -1) return null;
     const labels = split(host, ".");
-    for (let i = 0; i < length(labels); i++) {
-        if (!match(labels[i], /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/)) return null;
-    }
+    for (let i = 0; i < length(labels); i++) if (!match(labels[i], /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/)) return null;
     return { host: host, url: value };
 }
-
-const calibrationBoards = {
-    "mikrotik,routerboard-952ui-5ac2nd": true,
-    "mikrotik,hap-ac2": true,
-    "mikrotik,hap-ac3": true
-};
-if (!auth.isAdmin) { response.statusCode = 403; print("Administrator authentication required"); return; }
-if (!calibrationBoards[hardware.getBoardModel().id]) { response.statusCode = 404; print("Link calibration is not available on this device"); return; }
-
-const allowedInterfaces = { wan: "WAN 1", wan2: "WAN 2", wan3: "USB WAN" };
-let calibrationProvider = uciMesh.get("aredn", "multiwan", "calibration_provider") || "User-selected HTTPS calibration object";
-let calibrationHost = uciMesh.get("aredn", "multiwan", "calibration_host") || "";
-let calibrationUrl = uciMesh.get("aredn", "multiwan", "calibration_url") || "";
-let networkDump = { interface: [] };
-try { networkDump = ubus.call("network.interface", "dump") || networkDump; } catch (_) {}
-
 function interfaceState(name)
 {
-    const interfaces = networkDump.interface || [];
-    for (let i = 0; i < length(interfaces); i++) {
-        if (interfaces[i].interface !== name) continue;
-        const state = interfaces[i];
-        const addresses = state["ipv4-address"] || [];
-        const routes = state.route || [];
-        let gateway = "";
-        for (let r = 0; r < length(routes); r++) {
-            if (routes[r].target === "0.0.0.0" && int(routes[r].mask || 0) === 0) { gateway = routes[r].nexthop || ""; break; }
-        }
-        return { configured: true, up: state.up === true, device: state.l3_device || state.device || "", address: length(addresses) ? addresses[0].address : "", gateway: gateway };
+    try {
+        const state = ubus.call(`network.interface.${name}`, "status");
+        const addresses = (state && state["ipv4-address"]) || [];
+        return { configured: true, up: state?.up === true, device: state?.l3_device || state?.device || "", address: length(addresses) ? addresses[0].address : "" };
     }
-    return { configured: false, up: false, device: "", address: "", gateway: "" };
+    catch (_) { return { configured: false, up: false, device: "", address: "" }; }
 }
 
-let requestMessage = "";
-let requestError = "";
-let calibrationRequested = false;
-const lockPath = "/tmp/wan-calibration/.lock";
+const interfaces = [ { name: "wan", label: "WAN 1" }, { name: "wan2", label: "WAN 2" }, { name: "wan3", label: "WAN 3 USB" } ];
+let provider = uciMesh.get("aredn", "multiwan", "calibration_provider") || "User-selected HTTPS calibration object";
+let url = uciMesh.get("aredn", "multiwan", "calibration_url") || "";
+let host = uciMesh.get("aredn", "multiwan", "calibration_host") || "";
+let message = "";
+let error = "";
 if (request.env.REQUEST_METHOD === "PUT") {
     const action = request.args.action || "";
     if (action === "save-endpoint") {
-        const provider = request.args.calibration_provider || "User-selected HTTPS calibration object";
-        const url = request.args.calibration_url || "";
-        if (!validText(provider, 128)) {
-            requestError = "Calibration label contains unsupported characters or is too long";
-        }
-        else if (url === "") {
-            uciMesh.set("aredn", "multiwan", "calibration_provider", provider);
+        const nextProvider = request.args.calibration_provider || "User-selected HTTPS calibration object";
+        const nextUrl = request.args.calibration_url || "";
+        if (!validText(nextProvider, 128)) error = "Calibration label is too long or contains a newline";
+        else if (nextUrl === "") {
+            uciMesh.set("aredn", "multiwan", "calibration_provider", nextProvider);
             uciMesh.set("aredn", "multiwan", "calibration_host", "");
             uciMesh.set("aredn", "multiwan", "calibration_url", "");
             uciMesh.commit("aredn");
-            calibrationProvider = provider;
-            calibrationHost = "";
-            calibrationUrl = "";
-            requestMessage = "Calibration object cleared; active calibration is disabled";
+            provider = nextProvider; host = ""; url = "";
+            message = "Calibration object cleared";
         }
         else {
-            const parsed = parseCalibrationUrl(url);
-            if (!parsed) {
-                requestError = "Enter a complete HTTPS URL with a DNS hostname and object path; spaces, fragments, credentials, and custom ports are not accepted";
-            }
+            const parsed = parseUrl(nextUrl);
+            if (!parsed) error = "Enter a standard HTTPS URL with a DNS hostname and object path; credentials, spaces, fragments, and custom ports are not accepted";
             else {
-                uciMesh.set("aredn", "multiwan", "calibration_provider", provider);
+                uciMesh.set("aredn", "multiwan", "calibration_provider", nextProvider);
                 uciMesh.set("aredn", "multiwan", "calibration_host", parsed.host);
                 uciMesh.set("aredn", "multiwan", "calibration_url", parsed.url);
                 uciMesh.commit("aredn");
-                calibrationProvider = provider;
-                calibrationHost = parsed.host;
-                calibrationUrl = parsed.url;
-                requestMessage = "Calibration HTTPS object saved";
+                provider = nextProvider; host = parsed.host; url = parsed.url;
+                message = "Calibration HTTPS object saved";
             }
         }
     }
     else if (action === "calibrate") {
         const selected = request.args.interface || "";
-        const configuredObject = parseCalibrationUrl(calibrationUrl);
-        const calibrationConfigured = !!configuredObject && configuredObject.host === calibrationHost;
-        if (!allowedInterfaces[selected]) requestError = "Invalid calibration request";
-        else if (!calibrationConfigured) requestError = "Configure a valid HTTPS calibration object first";
-        else if (fs.access(lockPath)) requestError = "Another link calibration is already running";
+        let allowed = false;
+        for (let i = 0; i < length(interfaces); i++) if (interfaces[i].name === selected) allowed = true;
+        const parsed = parseUrl(url);
+        const state = allowed ? interfaceState(selected) : null;
+        if (!allowed) error = "Invalid WAN calibration request";
+        else if (!parsed || parsed.host !== host) error = "Configure a valid HTTPS calibration object first";
+        else if (!state.up || !state.address) error = `${selected} is not ready for calibration`;
+        else if (fs.access("/tmp/wan-calibration/.lock")) error = "Another calibration is already running";
         else {
-            const state = interfaceState(selected);
-            if (!state.configured || !state.up || state.address === "") requestError = `${allowedInterfaces[selected]} is not ready for calibration`;
-            else if (system(`/bin/sh /usr/local/bin/wan-calibrate ${selected} >/dev/null 2>&1 &`) !== 0) requestError = "Could not start the calibration process";
-            else { requestMessage = `${allowedInterfaces[selected]} calibration requested`; calibrationRequested = true; }
+            system(`/usr/local/bin/wan-calibrate ${selected} manual >/dev/null 2>&1 &`);
+            message = `${selected} manual calibration requested`;
         }
     }
-    else {
-        requestError = "Invalid calibration action";
-    }
+    else error = "Invalid calibration action";
 }
-
-const configuredObject = parseCalibrationUrl(calibrationUrl);
-const calibrationConfigured = !!configuredObject && configuredObject.host === calibrationHost;
-const links = [];
-for (let name in allowedInterfaces) {
-    const state = interfaceState(name);
-    const status = readCalibration(`/tmp/wan-calibration/${name}.status.json`);
-    const result = readCalibration(`/tmp/wan-calibration/${name}.result.json`);
-    const stale = !!(result && state.configured && (result.source !== state.address || (result.gateway !== "-" && state.gateway !== "" && result.gateway !== state.gateway)));
-    push(links, { name: name, label: allowedInterfaces[name], state: state, status: status, result: result, stale: stale });
-}
-const calibrationRunning = calibrationRequested || !!fs.access(lockPath);
+const configured = !!parseUrl(url) && parseUrl(url).host === host;
 %}
 <div class="dialog">
     {{_R("dialog-header", "WAN Link Calibration")}}
-    <div id="link-calibration-state" hx-get="{{request.env.REQUEST_URI}}" hx-trigger="{{calibrationRunning ? "every 2s [document.visibilityState === 'visible']" : ""}}" hx-select="#link-calibration-state" hx-target="this" hx-swap="outerHTML">
-        {% if (requestError) { %}<div><b>{{requestError}}</b></div><hr>{% } else if (requestMessage) { %}<div>{{requestMessage}}</div><hr>{% } %}
-        <form id="calibration-endpoint-form">
-            <div class="cols"><div><div class="o">Calibration label</div><div class="m">Descriptive name for the selected server or CDN</div></div><div style="flex:0"><input name="calibration_provider" type="text" size="34" maxlength="128" value="{{calibrationProvider}}" required></div></div>
-            <div class="cols"><div><div class="o">HTTPS calibration object</div><div class="m">A stable public object that supports HTTP byte ranges</div></div><div style="flex:0"><input name="calibration_url" type="url" size="52" maxlength="1024" placeholder="https://host.example/aredn/payload.bin" value="{{calibrationUrl}}"></div></div>
+    <div id="link-calibration-dialog" hx-get="{{request.env.REQUEST_URI}}" hx-trigger="every 3s [document.visibilityState === 'visible']" hx-select="#link-calibration-dialog" hx-target="this" hx-swap="outerHTML">
+        {% if (error) { %}<div><b>{{error}}</b></div><hr>{% } else if (message) { %}<div>{{message}}</div><hr>{% } %}
+        <form id="calibration-object-form">
+            <div class="cols"><div><div class="o">Calibration label</div><div class="m">Descriptive server/CDN name</div></div><div style="flex:0"><input name="calibration_provider" type="text" size="36" maxlength="128" value="{{provider}}" required></div></div>
+            <div class="cols"><div><div class="o">HTTPS object URL</div><div class="m">Stable object with at least 32 MiB and byte-range support</div></div><div style="flex:0"><input name="calibration_url" type="url" size="52" maxlength="1024" placeholder="https://host.example/path/payload.bin" value="{{url}}"></div></div>
         </form>
-        <div class="cols"><div><div class="m">{{calibrationConfigured ? "Configured host: " + calibrationHost : "No calibration object configured"}}</div></div><div style="flex:0"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#calibration-endpoint-form" hx-vals='{"action":"save-endpoint"}'>Save calibration object</button></div></div>
-        {{_H("The administrator selects and stores this HTTPS object on the node. It must return HTTP 206 for range requests and contain at least 32 MiB. A calibration-start request may select only wan, wan2, or wan3; it cannot supply or override the saved URL.")}}
+        <div class="cols"><div><div class="m">{{configured ? "Configured host: " + host : "Calibration disabled until an object is saved"}}</div></div><div style="flex:0"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#calibration-object-form" hx-vals='{"action":"save-endpoint"}'>Save object</button></div></div>
+        {{_H("The administrator selects the persistent object. A calibration-run request can select only wan, wan2, or wan3 and cannot supply or override the URL. The object must return HTTP 206 and the exact requested bytes; redirects are rejected.")}}
         <hr>
-        {% for (let i = 0; i < length(links); i++) { const link = links[i]; const state = link.state; const status = link.status; const result = link.result; const running = status?.status === "running"; const disabled = !calibrationConfigured || !state.configured || !state.up || !state.address || calibrationRunning; %}
-        <div class="cols">
-            <div><div class="o">{{link.label}}</div><div class="m">{{state.configured ? link.name + " · " + (state.device || "no device") + " · " + (state.address || "no IPv4 address") : link.name + " is not configured"}}</div></div>
-            <div style="flex:0;text-align:right;white-space:nowrap">
-                {% if (running) { %}<div>{{status.stage || "starting"}}</div><div class="m">calibrating</div>
-                {% } else if (result?.status === "complete") { %}<div>{{sprintf("%.2f", result.mbps)}} Mbps · {{result.bin}}{{link.stale ? " · stale" : ""}}</div><div class="m">{{result.time}} · {{result.bytes}} bytes{{result.proxy_enabled ? " · proxy" : ""}}</div>
-                {% } else if (status?.message) { %}<div>{{status.message}}</div>{% if (status.retry_after > 0) { %}<div class="m">retry in {{status.retry_after}} seconds</div>{% } %}
-                {% } else { %}<div>not calibrated</div>{% } %}
-            </div>
-            <div style="flex:0"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"calibrate","interface":"{{link.name}}"}' {{disabled ? "disabled" : ""}}>Calibrate</button></div>
-        </div>
-        {% if (i + 1 < length(links)) { %}<hr>{% } %}
+        {% for (let i = 0; i < length(interfaces); i++) { const item = interfaces[i]; const state = interfaceState(item.name); const status = readJson(`/tmp/wan-calibration/${item.name}.status.json`); const result = readJson(`/tmp/wan-calibration/${item.name}.result.json`); const running = status?.status === "running"; %}
+        <div class="cols"><div><div class="o">{{item.label}}</div><div class="m">{{state.configured ? (state.device || "no device") + " · " + (state.address || "no IPv4") : "not configured"}}</div></div><div style="flex:0;text-align:right;white-space:nowrap">{% if (running) { %}<div>{{status.stage || "starting"}}</div><div class="m">{{status.trigger || "manual"}}</div>{% } else if (result?.status === "complete") { %}<div>{{sprintf("%.2f", result.mbps)}} Mbps · {{result.bin}}</div><div class="m">{{result.time}} · {{result.trigger || "manual"}}{{result.proxy_enabled ? " · PdaNet proxy" : ""}}</div>{% } else { %}<div>{{status?.message || "not calibrated"}}</div>{% } %}</div><div style="flex:0"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"calibrate","interface":"{{item.name}}"}' {{!configured || !state.up || !state.address || fs.access("/tmp/wan-calibration/.lock") ? "disabled" : ""}}>Calibrate</button></div></div>
+        {% if (i + 1 < length(interfaces)) { %}<hr>{% } %}
         {% } %}
-        {{_H("USB WAN calibration travels over the phone-to-hAP USB tether and uses the PdaNet HTTP CONNECT proxy settings when proxy mode is enabled. Progressive 1 MiB, 8 MiB and 32 MiB ranges limit data use. Results are low (5 Mbps or less), medium (over 5 through 30 Mbps), or fast (over 30 Mbps).")}}
+        {{_H("Progressive 1 MiB, 8 MiB, and 32 MiB ranges limit data use to about 41 MiB. Bins are low at 5 Mbps or less, medium above 5 through 30 Mbps, and fast above 30 Mbps. WAN 3 binds to the phone USB address and uses its configured PdaNet proxy directly.")}}
     </div>
     {{_R("dialog-footer", "nocancel")}}
     <script>(function(){ {{_R("open")}} htmx.on("#dialog-done", "click", _ => htmx.ajax("GET", "/a/u-link-calibration", { target: "#link-calibration", swap: "outerHTML" })); })();</script>

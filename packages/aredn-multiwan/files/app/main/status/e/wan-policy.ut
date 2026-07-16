@@ -1,0 +1,137 @@
+{%
+const supportedBoards = {
+    "mikrotik,routerboard-952ui-5ac2nd": true,
+    "mikrotik,hap-ac2": true,
+    "mikrotik,hap-ac3": true
+};
+if (!auth.isAdmin) { response.statusCode = 403; print("Administrator authentication required"); return; }
+if (!supportedBoards[hardware.getBoardModel().id]) { response.statusCode = 404; print("PollyWAN is not available on this device"); return; }
+
+function allowed(value, values, fallback)
+{
+    for (let i = 0; i < length(values); i++) if (value === values[i]) return value;
+    return fallback;
+}
+function bounded(value, fallback, minimum, maximum)
+{
+    const n = int(value || fallback);
+    return n >= minimum && n <= maximum ? n : fallback;
+}
+function readJson(path)
+{
+    const value = fs.readfile(path);
+    if (!value) return null;
+    try { return json(value); } catch (_) { return null; }
+}
+function wifiWanInfo()
+{
+    const radio0 = uciMesh.get("setup", "globals", "radio0_mode") || "";
+    const radio1 = uciMesh.get("setup", "globals", "radio1_mode") || "";
+    if (radio0 === "wan" && radio1 === "wan") return { active: false, conflict: true, device: "", label: "invalid: both radios" };
+    if (radio0 === "wan") return { active: true, conflict: false, device: "wlan0", label: "Wi-Fi wlan0" };
+    if (radio1 === "wan") return { active: true, conflict: false, device: "wlan1", label: "Wi-Fi wlan1" };
+    return { active: false, conflict: false, device: "br-wan", label: "Ethernet" };
+}
+
+const wifiWan = wifiWanInfo();
+let message = "";
+let error = "";
+if (request.env.REQUEST_METHOD === "PUT") {
+    const action = request.args.action || "save";
+    if (action === "save") {
+        const enabled = request.args.enabled === "on" ? "1" : "0";
+        const mode = allowed(request.args.selection_mode || "manual", [ "manual", "availability", "adaptive" ], "manual");
+        const active = allowed(request.args.active || "wan", [ "wan", "wan2", "wan3", "mesh" ], "wan");
+        const preferred = allowed(request.args.preferred_wan || "wan", [ "wan", "wan2", "wan3" ], "wan");
+        const minbin = allowed(request.args.selection_min_bin || "low", [ "low", "medium", "fast" ], "low");
+        const sharebin = allowed(request.args.mesh_share_min_bin || "medium", [ "low", "medium", "fast" ], "medium");
+        const health = bounded(request.args.health_interval, 30, 10, 3600);
+        const failures = bounded(request.args.failure_count, 2, 1, 10);
+        const promotions = bounded(request.args.promote_count, 2, 1, 10);
+        const hold = bounded(request.args.hold_down, 120, 0, 3600);
+        const ttl = bounded(request.args.result_ttl, 28800, 300, 86400);
+        let interval = bounded(request.args.calibration_interval, 21600, 300, 86400);
+        if (interval > ttl) interval = ttl;
+
+        if (enabled === "1" && wifiWan.conflict) {
+            error = "Both AREDN radios are configured as WAN clients. Only one radio may own logical WAN 1.";
+        }
+        else {
+        uciMesh.set("aredn", "multiwan", "enabled", enabled);
+        uciMesh.set("aredn", "multiwan", "selection_mode", mode);
+        uciMesh.set("aredn", "multiwan", "active", active);
+        uciMesh.set("aredn", "multiwan", "preferred_wan", preferred);
+        uciMesh.set("aredn", "multiwan", "wan_enable", request.args.wan_enable === "on" ? "1" : "0");
+        uciMesh.set("aredn", "multiwan", "wan2_enable", request.args.wan2_enable === "on" ? "1" : "0");
+        uciMesh.set("aredn", "multiwan", "wan3_enable", request.args.wan3_enable === "on" ? "1" : "0");
+        uciMesh.set("aredn", "multiwan", "selection_min_bin", minbin);
+        uciMesh.set("aredn", "multiwan", "mesh_share_min_bin", sharebin);
+        uciMesh.set("aredn", "multiwan", "health_interval", health);
+        uciMesh.set("aredn", "multiwan", "failure_count", failures);
+        uciMesh.set("aredn", "multiwan", "promote_count", promotions);
+        uciMesh.set("aredn", "multiwan", "hold_down", hold);
+        uciMesh.set("aredn", "multiwan", "result_ttl", ttl);
+        uciMesh.set("aredn", "multiwan", "calibration_interval", interval);
+        uciMesh.set("aredn", "@wan[0]", "mesh_to_local_wan", request.args.mesh_to_local_wan === "on" ? "1" : "0");
+        uciMesh.set("aredn", "@wan[0]", "lan_to_remote_wan", request.args.lan_to_remote_wan === "on" ? "1" : "0");
+        uciMesh.commit("aredn");
+
+        if (enabled === "1") {
+            system("rm -f /tmp/wan-sla/inhibit; /etc/init.d/wan3-manager restart >/dev/null 2>&1 &");
+            message = "PollyWAN policy saved and controller restarted";
+        }
+        else {
+            system("mkdir -p /tmp/wan-sla; touch /tmp/wan-sla/inhibit; /usr/local/bin/wan-port-manager disable >/dev/null 2>&1; /usr/local/bin/wan3-manager disable >/dev/null 2>&1; /usr/local/bin/wan-tunnel-guard remove >/dev/null 2>&1; /etc/init.d/wan3-manager stop >/dev/null 2>&1 &");
+            message = "PollyWAN disabled; managed port roles and package-created routing are being removed";
+        }
+        }
+    }
+    else if (action === "evaluate") {
+        system("/usr/local/bin/wan-sla once >/dev/null 2>&1 &");
+        message = "A fresh WAN evaluation was requested";
+    }
+    else if (action === "mesh-fallback") {
+        uciMesh.set("aredn", "multiwan", "selection_mode", "manual");
+        uciMesh.set("aredn", "multiwan", "active", "mesh");
+        uciMesh.commit("aredn");
+        system("/usr/local/bin/wan3-manager withdraw 'Administrator selected remote Mesh WAN fallback' 1 >/dev/null 2>&1 &");
+        message = "Local Internet defaults withdrawn; AREDN table 22 may provide the remote Mesh WAN";
+    }
+    else error = "Invalid policy action";
+}
+
+const enabled = uciMesh.get("aredn", "multiwan", "enabled") === "1";
+const mode = uciMesh.get("aredn", "multiwan", "selection_mode") || "manual";
+const active = uciMesh.get("aredn", "multiwan", "active") || "wan";
+const status = readJson("/tmp/wan-sla/status.json");
+const candidates = status?.candidates || [];
+%}
+<div class="dialog">
+    {{_R("dialog-header", "PollyWAN selection policy")}}
+    <div>
+        {% if (error) { %}<div><b>{{error}}</b></div><hr>{% } else if (message) { %}<div>{{message}}</div><hr>{% } %}
+        <div class="cols"><div><div class="o">Runtime decision</div><div class="m">{{status?.message || "No SLA status is available"}}</div></div><div style="flex:0;text-align:right"><div>{{status?.active || active}}</div><div class="m">{{status?.selected_bin || "unknown"}}</div></div></div>
+        <div class="cols"><div><div class="o">WAN 1 transport</div><div class="m">AREDN Wi-Fi client mode still uses logical interface wan and private table 101</div></div><div style="flex:0;text-align:right"><div>{{wifiWan.label}}</div><div class="m">{{wifiWan.active ? wifiWan.device : "br-wan"}}</div></div></div>
+        <form id="wan-policy-form">
+            <div class="cols"><div><div class="o">Enable PollyWAN</div><div class="m">Disabled installation is inert and leaves ordinary AREDN networking and GPS untouched</div></div><div style="flex:0"><input type="checkbox" name="enabled" {{enabled ? "checked" : ""}}></div></div>
+            <div class="cols"><div><div class="o">Selection mode</div><div class="m">Manual, health-only availability, or health plus fresh speed bins</div></div><div style="flex:0"><select name="selection_mode"><option value="manual" {{mode === "manual" ? "selected" : ""}}>Manual</option><option value="availability" {{mode === "availability" ? "selected" : ""}}>Availability</option><option value="adaptive" {{mode === "adaptive" ? "selected" : ""}}>Adaptive speed bins</option></select></div></div>
+            <div class="cols"><div><div class="o">Manual/current path</div><div class="m">Remote Mesh WAN withdraws local tables 26/27/28 and leaves Babel table 22 alone</div></div><div style="flex:0"><select name="active"><option value="wan" {{active === "wan" ? "selected" : ""}}>WAN 1 ({{wifiWan.label}})</option><option value="wan2" {{active === "wan2" ? "selected" : ""}}>WAN 2</option><option value="wan3" {{active === "wan3" ? "selected" : ""}}>WAN 3 USB</option><option value="mesh" {{active === "mesh" ? "selected" : ""}}>Remote Mesh WAN</option></select></div></div>
+            <div class="cols"><div><div class="o">Preferred local WAN</div><div class="m">Wins ties when eligible links are in the same speed bin</div></div><div style="flex:0"><select name="preferred_wan"><option value="wan" {{uciMesh.get("aredn", "multiwan", "preferred_wan") === "wan" ? "selected" : ""}}>WAN 1 ({{wifiWan.label}})</option><option value="wan2" {{uciMesh.get("aredn", "multiwan", "preferred_wan") === "wan2" ? "selected" : ""}}>WAN 2</option><option value="wan3" {{uciMesh.get("aredn", "multiwan", "preferred_wan") === "wan3" ? "selected" : ""}}>WAN 3 USB</option></select></div></div>
+            <hr>
+            <div class="cols"><div><div class="o">Enabled candidates</div><div class="m">WAN 1 is {{wifiWan.label}}; WAN 2 is Ethernet; WAN 3 is fixed to USB</div></div><div style="flex:0;white-space:nowrap"><label>1 <input type="checkbox" name="wan_enable" {{uciMesh.get("aredn", "multiwan", "wan_enable") !== "0" ? "checked" : ""}}></label> <label>2 <input type="checkbox" name="wan2_enable" {{uciMesh.get("aredn", "multiwan", "wan2_enable") === "1" ? "checked" : ""}}></label> <label>USB <input type="checkbox" name="wan3_enable" {{uciMesh.get("aredn", "multiwan", "wan3_enable") === "1" ? "checked" : ""}}></label></div></div>
+            <div class="cols"><div><div class="o">Minimum selectable bin</div><div class="m">Adaptive mode rejects candidates below this class</div></div><div style="flex:0"><select name="selection_min_bin"><option value="low" {{uciMesh.get("aredn", "multiwan", "selection_min_bin") === "low" ? "selected" : ""}}>low</option><option value="medium" {{uciMesh.get("aredn", "multiwan", "selection_min_bin") === "medium" ? "selected" : ""}}>medium</option><option value="fast" {{uciMesh.get("aredn", "multiwan", "selection_min_bin") === "fast" ? "selected" : ""}}>fast</option></select></div></div>
+            <div class="cols"><div><div class="o">Minimum mesh-share bin</div><div class="m">Table 28 stays empty below this class even when Mesh to WAN is enabled</div></div><div style="flex:0"><select name="mesh_share_min_bin"><option value="low" {{uciMesh.get("aredn", "multiwan", "mesh_share_min_bin") === "low" ? "selected" : ""}}>low</option><option value="medium" {{uciMesh.get("aredn", "multiwan", "mesh_share_min_bin") === "medium" ? "selected" : ""}}>medium</option><option value="fast" {{uciMesh.get("aredn", "multiwan", "mesh_share_min_bin") === "fast" ? "selected" : ""}}>fast</option></select></div></div>
+            <div class="cols"><div><div class="o">AREDN Mesh to WAN</div><div class="m">Allows a qualified table-28 default to be advertised by Babel</div></div><div style="flex:0"><input type="checkbox" name="mesh_to_local_wan" {{uciMesh.get("aredn", "@wan[0]", "mesh_to_local_wan") === "1" ? "checked" : ""}}></div></div>
+            <div class="cols"><div><div class="o">AREDN LAN to Mesh WAN</div><div class="m">Allows LAN clients to use a remote default already learned into table 22</div></div><div style="flex:0"><input type="checkbox" name="lan_to_remote_wan" {{uciMesh.get("aredn", "@wan[0]", "lan_to_remote_wan") === "1" ? "checked" : ""}}></div></div>
+            <hr>
+            <div class="cols"><div><div class="o">Health interval / failures</div><div class="m">Seconds between checks and failures before demotion</div></div><div style="flex:0;white-space:nowrap"><input name="health_interval" type="number" min="10" max="3600" size="5" value="{{uciMesh.get("aredn", "multiwan", "health_interval") || 30}}"> s / <input name="failure_count" type="number" min="1" max="10" size="3" value="{{uciMesh.get("aredn", "multiwan", "failure_count") || 2}}"></div></div>
+            <div class="cols"><div><div class="o">Promotion observations / hold-down</div><div class="m">Consecutive better observations and seconds before another promotion</div></div><div style="flex:0;white-space:nowrap"><input name="promote_count" type="number" min="1" max="10" size="3" value="{{uciMesh.get("aredn", "multiwan", "promote_count") || 2}}"> / <input name="hold_down" type="number" min="0" max="3600" size="5" value="{{uciMesh.get("aredn", "multiwan", "hold_down") || 120}}"> s</div></div>
+            <div class="cols"><div><div class="o">Result lifetime / automatic calibration</div><div class="m">Seconds before a bin is stale and minimum interval between adaptive calibrations</div></div><div style="flex:0;white-space:nowrap"><input name="result_ttl" type="number" min="300" max="86400" size="7" value="{{uciMesh.get("aredn", "multiwan", "result_ttl") || 28800}}"> / <input name="calibration_interval" type="number" min="300" max="86400" size="7" value="{{uciMesh.get("aredn", "multiwan", "calibration_interval") || 21600}}"></div></div>
+        </form>
+        {{_H("PollyWAN owns only local candidates wan, wan2, and wan3. The wan candidate is AREDN Wi-Fi client mode on wlan0/wlan1 when configured, otherwise Ethernet br-wan. A remote Mesh WAN remains an AREDN/Babel table-22 fallback and is never copied into table 28. Tunnel ingress is always blocked from local and remote Internet defaults while PollyWAN is enabled; that guard is deliberately not a user toggle.")}}
+        {% if (length(candidates)) { %}<hr><div class="cols">{% for (let i = 0; i < length(candidates); i++) { const c = candidates[i]; %}<div><div class="t">{{c.name}}: {{c.bin}} {{c.mbps ? sprintf("%.1f Mbps", c.mbps) : ""}}</div><div class="s">{{c.healthy ? "healthy" : "ineligible"}} · {{c.reason}}</div></div>{% } %}</div>{% } %}
+        <div class="cols"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#wan-policy-form" hx-vals='{"action":"save"}'>Save policy</button><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"evaluate"}'>Evaluate now</button><div style="flex:1"></div><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"mesh-fallback"}'>Use remote Mesh WAN</button></div>
+    </div>
+    {{_R("dialog-footer", "nocancel")}}
+    <script>(function(){ {{_R("open")}} htmx.on("#dialog-done", "click", _ => htmx.ajax("GET", "/a/u-wan-policy", { target: "#wan-policy", swap: "outerHTML" })); })();</script>
+</div>

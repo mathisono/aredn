@@ -1,62 +1,70 @@
 #!/bin/sh
-# Seed package defaults without modifying the base firmware source file.
+# Seed PollyWAN defaults. This script intentionally does not read or write GPS,
+# gpsd, USB power, AREDN time, or location settings.
 
-UCI="uci -c /etc/config.mesh"
+UCI='uci -c /etc/config.mesh'
 
 if ! $UCI -q get aredn.multiwan >/dev/null 2>&1; then
-    $UCI batch <<'EOF'
-set aredn.multiwan='multiwan'
-set aredn.multiwan.enabled='0'
-set aredn.multiwan.active='wan'
-set aredn.multiwan.wan3_enable='0'
-set aredn.multiwan.wan3_device='auto'
-set aredn.multiwan.wan3_proxy_enable='1'
-set aredn.multiwan.wan3_proxy_host='192.168.49.1'
-set aredn.multiwan.wan3_proxy_port='8000'
-set aredn.multiwan.wan3_proxy_username=''
-set aredn.multiwan.wan3_proxy_password=''
-set aredn.multiwan.wan3_proxy_local_port='12346'
-set aredn.multiwan.calibration_provider='User-selected HTTPS calibration object'
-set aredn.multiwan.calibration_host=''
-set aredn.multiwan.calibration_url=''
-set aredn.multiwan.calibration_cooldown='300'
-EOF
-else
-    set_default()
-    {
-        option="$1"
-        value="$2"
-        $UCI -q get "aredn.multiwan.$option" >/dev/null 2>&1 || \
-            $UCI set "aredn.multiwan.$option=$value"
-    }
+    $UCI set aredn.multiwan='multiwan'
+fi
 
-    set_default enabled 0
-    set_default active wan
-    set_default wan3_enable 0
-    set_default wan3_device auto
-    set_default wan3_proxy_enable 1
-    set_default wan3_proxy_host 192.168.49.1
-    set_default wan3_proxy_port 8000
-    set_default wan3_proxy_username ''
-    set_default wan3_proxy_password ''
-    set_default wan3_proxy_local_port 12346
-    set_default calibration_provider 'User-selected HTTPS calibration object'
-    set_default calibration_host ''
-    set_default calibration_url ''
-    set_default calibration_cooldown 300
+set_default()
+{
+    option="$1"; value="$2"
+    $UCI -q get "aredn.multiwan.$option" >/dev/null 2>&1 || $UCI set "aredn.multiwan.$option=$value"
+}
 
-    # Development builds before the installable package used the feed package's
-    # example listener port. Move only that known old default to our private port.
-    if [ "$($UCI -q get aredn.multiwan.wan3_proxy_local_port 2>/dev/null)" = 12345 ]; then
-        $UCI set aredn.multiwan.wan3_proxy_local_port='12346'
-    fi
+set_default enabled 0
+set_default selection_mode manual
+set_default active wan
+set_default active_bin unknown
+set_default preferred_wan wan
+set_default wan_enable 1
+set_default wan2_enable 0
+set_default wan3_enable 0
+set_default selection_min_bin low
+set_default mesh_share_min_bin medium
+set_default health_interval 30
+set_default failure_count 2
+set_default promote_count 2
+set_default hold_down 120
+set_default result_ttl 28800
+set_default calibration_interval 21600
 
-    # Before r3 the blank endpoint carried a Hayward-specific label even though
-    # no URL was configured. Preserve any real configured endpoint or custom label.
-    if [ -z "$($UCI -q get aredn.multiwan.calibration_url 2>/dev/null)" ] && \
-       [ "$($UCI -q get aredn.multiwan.calibration_provider 2>/dev/null)" = 'Hurricane Electric / Hayward Internet Exchange' ]; then
-        $UCI set aredn.multiwan.calibration_provider='User-selected HTTPS calibration object'
-    fi
+# Ethernet role management is a second explicit opt-in. WAN3 is fixed to USB.
+set_default port_roles_enabled 0
+set_default port_rollback_timeout 180
+set_default port1_role wan
+set_default port2_role lan
+set_default port3_role lan
+set_default port4_role lan
+set_default port5_role off
+set_default port1_dtd 0
+set_default port2_dtd 0
+set_default port3_dtd 0
+set_default port4_dtd 0
+set_default port5_dtd 1
+
+set_default wan3_device auto
+set_default wan3_proxy_enable 1
+set_default wan3_proxy_host 192.168.49.1
+set_default wan3_proxy_port 8000
+set_default wan3_proxy_username ''
+set_default wan3_proxy_password ''
+set_default wan3_proxy_local_port 12346
+
+set_default calibration_provider 'User-selected HTTPS calibration object'
+set_default calibration_host ''
+set_default calibration_url ''
+set_default calibration_cooldown 300
+
+# Migrate known development defaults without changing custom values.
+if [ "$($UCI -q get aredn.multiwan.wan3_proxy_local_port 2>/dev/null)" = 12345 ]; then
+    $UCI set aredn.multiwan.wan3_proxy_local_port='12346'
+fi
+if [ -z "$($UCI -q get aredn.multiwan.calibration_url 2>/dev/null)" ] && \
+   [ "$($UCI -q get aredn.multiwan.calibration_provider 2>/dev/null)" = 'Hurricane Electric / Hayward Internet Exchange' ]; then
+    $UCI set aredn.multiwan.calibration_provider='User-selected HTTPS calibration object'
 fi
 
 $UCI commit aredn

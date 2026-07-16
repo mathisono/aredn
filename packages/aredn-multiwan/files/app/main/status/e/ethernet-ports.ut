@@ -1,0 +1,131 @@
+{%
+const supportedBoards = {
+    "mikrotik,routerboard-952ui-5ac2nd": true,
+    "mikrotik,hap-ac2": true,
+    "mikrotik,hap-ac3": true
+};
+if (!auth.isAdmin) { response.statusCode = 403; print("Administrator authentication required"); return; }
+if (!supportedBoards[hardware.getBoardModel().id]) { response.statusCode = 404; print("Ethernet role management is not available on this device"); return; }
+
+function readJson(path)
+{
+    const value = fs.readfile(path);
+    if (!value) return null;
+    try { return json(value); } catch (_) { return null; }
+}
+function role(value)
+{
+    return value === "lan" || value === "wan" || value === "wan2" || value === "off" ? value : "off";
+}
+function wifiWanInfo()
+{
+    const radio0 = uciMesh.get("setup", "globals", "radio0_mode") || "";
+    const radio1 = uciMesh.get("setup", "globals", "radio1_mode") || "";
+    const conflict = radio0 === "wan" && radio1 === "wan";
+    if (conflict) return { active: false, conflict: true, device: "", label: "invalid: both radios are WAN clients" };
+    if (radio0 === "wan") return { active: true, conflict: false, device: "wlan0", label: "Wi-Fi client on wlan0" };
+    if (radio1 === "wan") return { active: true, conflict: false, device: "wlan1", label: "Wi-Fi client on wlan1" };
+    return { active: false, conflict: false, device: "br-wan", label: "Ethernet br-wan" };
+}
+function loadPorts()
+{
+    const result = [];
+    const f = fs.popen("/usr/local/bin/wan-port-manager ports 2>/dev/null");
+    if (f) {
+        for (let line = f.read("line"); length(line); line = f.read("line")) {
+            const p = split(trim(line), "|");
+            if (length(p) === 6) push(result, { name: p[0], label: p[1], device: p[2], active: p[3] === "1", role: p[4], dtd: p[5] === "1" });
+        }
+        f.close();
+    }
+    return result;
+}
+
+const wifiWan = wifiWanInfo();
+let message = "";
+let error = "";
+if (request.env.REQUEST_METHOD === "PUT") {
+    const action = request.args.action || "save";
+    if (action === "save" || action === "apply") {
+        const roles = {};
+        let lanCount = 0;
+        let wanCount = 0;
+        let wan2Count = 0;
+        for (let i = 1; i <= 5; i++) {
+            const name = `port${i}`;
+            const selected = role(request.args[`role_${name}`] || uciMesh.get("aredn", "multiwan", `${name}_role`) || "off");
+            roles[name] = selected;
+            if (selected === "lan") lanCount++;
+            else if (selected === "wan") wanCount++;
+            else if (selected === "wan2") wan2Count++;
+        }
+        const wanEnabled = request.args.wan_enable === "on";
+        const wan2Enabled = request.args.wan2_enable === "on";
+        if (wifiWan.conflict) error = "Both radios are configured as WAN clients. AREDN supports only one radio owning logical WAN 1.";
+        else if (lanCount < 1) error = "At least one Ethernet port must remain LAN";
+        else if (wifiWan.active && wanCount > 0) error = `WAN 1 is ${wifiWan.label}; no Ethernet port may also be assigned to WAN 1`;
+        else if (!wifiWan.active && wanEnabled && wanCount < 1) error = "WAN 1 is enabled but no port is assigned to WAN 1";
+        else if (wan2Enabled && wan2Count < 1) error = "WAN 2 is enabled but no port is assigned to WAN 2";
+        else {
+            uciMesh.set("aredn", "multiwan", "port_roles_enabled", request.args.port_roles_enabled === "on" ? "1" : "0");
+            uciMesh.set("aredn", "multiwan", "wan_enable", wanEnabled ? "1" : "0");
+            uciMesh.set("aredn", "multiwan", "wan2_enable", wan2Enabled ? "1" : "0");
+            for (let i = 1; i <= 5; i++) {
+                const name = `port${i}`;
+                uciMesh.set("aredn", "multiwan", `${name}_role`, roles[name]);
+                uciMesh.set("aredn", "multiwan", `${name}_dtd`, request.args[`dtd_${name}`] === "on" ? "1" : "0");
+            }
+            uciMesh.commit("aredn");
+            if (action === "apply") {
+                uciMesh.set("aredn", "multiwan", "enabled", "1");
+                uciMesh.set("aredn", "multiwan", "port_roles_enabled", "1");
+                uciMesh.commit("aredn");
+                system("/usr/local/bin/wan-port-manager apply >/tmp/wan-port-manager/apply.log 2>&1 &");
+                message = "Ethernet roles are being applied. Reconnect and confirm within the rollback window.";
+            }
+            else message = "Ethernet role choices saved but not applied";
+        }
+    }
+    else if (action === "confirm") {
+        const token = request.args.token || "";
+        if (!match(token, /^[0-9]+-[0-9]+$/)) error = "No valid rollback token is available";
+        else if (system(`/usr/local/bin/wan-port-manager confirm ${token} >/dev/null 2>&1`) === 0) message = "Ethernet role change confirmed";
+        else error = "Could not confirm the Ethernet role change";
+    }
+    else if (action === "restore") {
+        uciMesh.set("aredn", "multiwan", "port_roles_enabled", "0");
+        uciMesh.commit("aredn");
+        system("/usr/local/bin/wan-port-manager restore >/tmp/wan-port-manager/restore.log 2>&1 &");
+        message = "AREDN Ethernet defaults are being restored";
+    }
+    else error = "Invalid Ethernet role action";
+}
+
+const ports = loadPorts();
+const state = readJson("/tmp/wan-port-manager/state.json");
+let gps = "";
+const gf = fs.popen("/usr/local/bin/wan-port-manager gps-status 2>/dev/null");
+if (gf) { gps = trim(gf.read("all") || ""); gf.close(); }
+const roleEnabled = uciMesh.get("aredn", "multiwan", "port_roles_enabled") === "1";
+%}
+<div class="dialog">
+    {{_R("dialog-header", "hAP Ethernet port roles")}}
+    <div>
+        {% if (error) { %}<div><b>{{error}}</b></div><hr>{% } else if (message) { %}<div>{{message}}</div><hr>{% } %}
+        <div class="cols"><div><div class="o">Runtime state</div><div class="m">{{state?.message || "No managed Ethernet roles have been applied"}}</div></div><div style="flex:0;text-align:right"><div>{{state?.applied ? "managed" : "AREDN defaults"}}</div><div class="m">{{state?.pending_token ? "rollback pending" : "stable"}}</div></div></div>
+        <div class="cols"><div><div class="o">WAN 1 transport</div><div class="m">AREDN Wi-Fi client mode keeps the logical interface name wan and uses private table 101</div></div><div style="flex:0;text-align:right"><div>{{wifiWan.label}}</div><div class="m">{{wifiWan.active ? "Ethernet WAN 1 is unavailable" : "Ethernet WAN 1 may be assigned below"}}</div></div></div>
+        <form id="ethernet-role-form">
+            <div class="cols"><div><div class="o">Manage Ethernet roles with PollyWAN</div><div class="m">Second explicit opt-in; installation alone never changes a port or radio mode</div></div><div style="flex:0"><input type="checkbox" name="port_roles_enabled" {{roleEnabled ? "checked" : ""}}></div></div>
+            <div class="cols"><div><div class="o">Enable local candidates</div><div class="m">WAN 1 is {{wifiWan.active ? wifiWan.label : "Ethernet"}}; WAN 2 is Ethernet; WAN 3 is permanently USB</div></div><div style="flex:0;white-space:nowrap"><label>WAN 1 <input type="checkbox" name="wan_enable" {{uciMesh.get("aredn", "multiwan", "wan_enable") !== "0" ? "checked" : ""}}></label> <label>WAN 2 <input type="checkbox" name="wan2_enable" {{uciMesh.get("aredn", "multiwan", "wan2_enable") === "1" ? "checked" : ""}}></label></div></div>
+            <div class="ports"><div><table><thead><tr><td></td>{% for (let i = 0; i < length(ports); i++) { const p = ports[i]; %}<td class="{{p.active ? "active" : ""}}"><div>{{p.label}}</div><div>{{p.device}}</div></td>{% } %}<td><div>USB</div><div>phone</div></td></tr></thead><tbody>
+                <tr><td><div>untagged</div><div>role</div></td>{% for (let i = 0; i < length(ports); i++) { const p = ports[i]; const displayRole = wifiWan.active && p.role === "wan" ? "off" : p.role; %}<td><select name="role_{{p.name}}"><option value="lan" {{displayRole === "lan" ? "selected" : ""}}>LAN</option>{% if (!wifiWan.active) { %}<option value="wan" {{displayRole === "wan" ? "selected" : ""}}>WAN 1</option>{% } %}<option value="wan2" {{displayRole === "wan2" ? "selected" : ""}}>WAN 2</option><option value="off" {{displayRole === "off" ? "selected" : ""}}>Disabled</option></select></td>{% } %}<td><b>WAN 3</b></td></tr>
+                <tr><td><div>DtD</div><div>VLAN 2 tagged</div></td>{% for (let i = 0; i < length(ports); i++) { const p = ports[i]; %}<td><input type="checkbox" name="dtd_{{p.name}}" {{p.dtd ? "checked" : ""}}></td>{% } %}<td>—</td></tr>
+            </tbody></table></div></div>
+        </form>
+        {{_H("This table follows AREDN's advanced Ports design: each physical Ethernet port has one untagged role and may also carry tagged DtD VLAN 2. When an AREDN radio is in WAN client mode, that radio owns logical wan/WAN 1 and the package removes its Ethernet WAN override. WAN 2 remains assignable to Ethernet and WAN 3 remains fixed to USB. Applying writes reversible AREDN include files and starts a timed rollback.")}}
+        {{_H("GPS safety: WAN 3 only inspects network devices under /sys/class/net. It never opens /dev/ttyACM0 or /dev/ttyUSB0, never edits gpsd, AREDN GPS time/location settings, radio mode, or USB power. Current GPS observation: " + (gps || "not available") + ".")}}
+        <div class="cols"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#ethernet-role-form" hx-vals='{"action":"save"}'>Save roles</button><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#ethernet-role-form" hx-vals='{"action":"apply"}'>Apply with rollback</button>{% if (state?.pending_token) { %}<button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"confirm","token":"{{state.pending_token}}"}'>Confirm working</button>{% } %}<div style="flex:1"></div><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"restore"}'>Restore AREDN defaults</button></div>
+    </div>
+    {{_R("dialog-footer", "nocancel")}}
+    <script>(function(){ {{_R("open")}} htmx.on("#dialog-done", "click", _ => htmx.ajax("GET", "/a/u-ethernet-ports", { target: "#ethernet-ports", swap: "outerHTML" })); })();</script>
+</div>

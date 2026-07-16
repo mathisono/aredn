@@ -1,0 +1,313 @@
+#!/bin/sh
+# Static and disposable-mock verification for the standalone PollyWAN r6 source.
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+cd "$ROOT"
+
+fail() { echo "ERROR: $*" >&2; exit 1; }
+require_file() { [ -f "$1" ] || fail "missing $1"; }
+require_text() { grep -F -- "$2" "$1" >/dev/null || fail "$1 missing: $2"; }
+reject_text() { ! grep -F -- "$2" "$1" >/dev/null || fail "$1 unexpectedly contains: $2"; }
+
+SHELL_FILES='files/usr/local/bin/wan-port-manager
+files/usr/local/bin/wan3-manager
+files/usr/local/bin/wan-route-cache
+files/usr/local/bin/wan-sla
+files/usr/local/bin/wan-tunnel-guard
+files/usr/local/bin/wan-calibrate
+files/etc/init.d/wan3-manager
+files/etc/hotplug.d/iface/95-wan3-manager
+files/etc/hotplug.d/net/95-wan3-manager
+files/etc/uci-defaults/95-aredn-multiwan
+files/www/cgi-bin/apps/aredn-multiwan/admin
+tests/verify.sh
+tests/mock-port-manager.sh
+tests/mock-route-cache.sh
+tests/mock-tunnel-guard.sh
+tools/sync-integration.sh'
+
+REQUIRED='Makefile
+README.md
+LICENSE
+AREDNLicense.txt
+.github/workflows/verify.yml
+SYNC_SOURCE
+docs/README.md
+docs/port-roles-and-gps.md
+docs/multiwan-usb-wan.md
+docs/multiwan-link-calibration.md
+docs/multiwan-mesh-wan.md
+docs/multiwan-verification.md
+tools/openclaw-build-test-prompt.md
+tools/sync-integration.sh
+tests/test-selection-model.py
+files/app/main/multiwan.ut
+files/app/main/u-multiwan.ut
+files/app/main/u-wan-policy.ut
+files/app/main/u-ethernet-ports.ut
+files/app/main/u-usb-wan.ut
+files/app/main/u-link-calibration.ut
+files/app/main/status/e/wan-policy.ut
+files/app/main/status/e/ethernet-ports.ut
+files/app/main/status/e/usb-wan.ut
+files/app/main/status/e/link-calibration.ut
+files/app/partial/multiwan-page.ut
+files/app/partial/wan-policy.ut
+files/app/partial/ethernet-ports.ut
+files/app/partial/usb-wan.ut
+files/app/partial/link-calibration.ut
+files/www/apps/aredn-multiwan/help.html
+files/www/apps/aredn-multiwan/icon.svg'
+
+for file in $REQUIRED $SHELL_FILES; do require_file "$file"; done
+[ ! -e .bootstrap ] || fail 'broken bootstrap directory remains'
+[ ! -e .github/workflows/bootstrap.yml ] || fail 'temporary bootstrap workflow remains'
+
+for file in $SHELL_FILES; do
+    busybox ash -n "$file" || fail "BusyBox ash syntax: $file"
+    if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        mode="$(git ls-files -s -- "$file" | awk '{print $1}')"
+        [ -z "$mode" ] || [ "$mode" = 100755 ] || fail "$file mode $mode, expected 100755"
+    else
+        [ -x "$file" ] || fail "$file is not executable"
+    fi
+done
+[ -x tests/test-selection-model.py ] || fail 'tests/test-selection-model.py is not executable'
+
+# Package metadata and optional-only target contract.
+require_text Makefile 'PKG_NAME:=aredn-multiwan'
+require_text Makefile 'PKG_VERSION:=0.1.0'
+require_text Makefile 'PKG_RELEASE:=6'
+require_text Makefile 'URL:=https://github.com/mathisono/AREDN_PollyWAN'
+require_text Makefile '+kmod-usb-net-rndis'
+require_text Makefile '+kmod-usb-net-cdc-ether'
+require_text Makefile '+kmod-usb-net-cdc-ncm'
+require_text Makefile '+TARGET_ath79:kmod-usb2'
+require_text Makefile '+TARGET_ath79:swconfig'
+require_text Makefile 'WAN 1 as either administrator-selected hAP Ethernet or the'
+require_text Makefile 'existing AREDN Wi-Fi client logical interface'
+require_text Makefile 'Installation is disabled and inert'
+require_text Makefile 'Package/aredn-multiwan/prerm'
+require_text LICENSE 'GNU General Public License'
+require_text AREDNLicense.txt 'not represented as an official'
+
+# Defaults are inert and GPS/radio neutral.
+DEFAULTS=files/etc/uci-defaults/95-aredn-multiwan
+require_text "$DEFAULTS" 'set_default enabled 0'
+require_text "$DEFAULTS" 'set_default port_roles_enabled 0'
+require_text "$DEFAULTS" 'set_default selection_mode manual'
+require_text "$DEFAULTS" 'set_default wan_enable 1'
+require_text "$DEFAULTS" 'set_default wan2_enable 0'
+require_text "$DEFAULTS" 'set_default wan3_enable 0'
+require_text "$DEFAULTS" 'set_default port1_role wan'
+require_text "$DEFAULTS" 'set_default port2_role lan'
+require_text "$DEFAULTS" 'set_default port5_dtd 1'
+require_text "$DEFAULTS" 'set_default selection_min_bin low'
+require_text "$DEFAULTS" 'set_default mesh_share_min_bin medium'
+require_text "$DEFAULTS" 'set_default failure_count 2'
+require_text "$DEFAULTS" 'set_default promote_count 2'
+require_text "$DEFAULTS" 'set_default hold_down 120'
+require_text "$DEFAULTS" 'set_default wan3_proxy_host 192.168.49.1'
+require_text "$DEFAULTS" 'set_default wan3_proxy_port 8000'
+require_text "$DEFAULTS" 'set_default wan3_proxy_local_port 12346'
+reject_text "$DEFAULTS" 'set gpsd'
+reject_text "$DEFAULTS" '@time['
+reject_text "$DEFAULTS" '@location['
+reject_text "$DEFAULTS" 'radio0_mode='
+reject_text "$DEFAULTS" 'radio1_mode='
+reject_text "$DEFAULTS" 'usb_passthrough'
+
+# Ethernet roles, Wi-Fi ownership, rollback, and GPS boundary.
+PORTS=files/usr/local/bin/wan-port-manager
+require_text "$PORTS" 'WAN3 is never assigned here'
+require_text "$PORTS" 'radio_mode()'
+require_text "$PORTS" 'wifi_wan_device()'
+require_text "$PORTS" "printf '%s\\n' wlan0"
+require_text "$PORTS" "printf '%s\\n' wlan1"
+require_text "$PORTS" "printf 'wifi:%s\\n'"
+require_text "$PORTS" 'invalid:both-radios'
+require_text "$PORTS" 'no Ethernet port may be assigned to WAN 1'
+require_text "$PORTS" 'our Ethernet WAN override'
+require_text "$PORTS" 'version=6'
+require_text "$PORTS" 'wan_transport='
+require_text "$PORTS" 'WAN 1 transport changed from'
+require_text "$PORTS" 'mikrotik,routerboard-952ui-5ac2nd) echo swconfig'
+require_text "$PORTS" 'mikrotik,hap-ac2|mikrotik,hap-ac3) echo dsa'
+require_text "$PORTS" 'at least one Ethernet port must remain LAN'
+require_text "$PORTS" 'schedule_rollback'
+require_text "$PORTS" 'POLLYWAN_TEST_MODE'
+require_text "$PORTS" 'pending-token'
+require_text "$PORTS" 'confirm_roles'
+require_text "$PORTS" 'restore_backups'
+require_text "$PORTS" '/usr/local/bin/node-setup'
+require_text "$PORTS" 'add_list "firewall.$zone.network=wan2"'
+require_text "$PORTS" 'option ip4table '\''102'\'''
+require_text "$PORTS" 'gps_status()'
+reject_text "$PORTS" 'uci set gpsd'
+reject_text "$PORTS" 'uci -c /etc/config.mesh set gpsd'
+reject_text "$PORTS" 'gpsd stop'
+reject_text "$PORTS" 'gpsd restart'
+reject_text "$PORTS" 'usb_passthrough'
+
+# WAN3 is network-class only, opt-in, and does not touch serial GPS.
+WAN3=files/usr/local/bin/wan3-manager
+require_text "$WAN3" '/sys/class/net/'
+require_text "$WAN3" 'usb[0-9]*|rndis[0-9]*|wwan[0-9]*|enx*'
+require_text "$WAN3" 'json_add_string name wan3'
+require_text "$WAN3" 'json_add_string ip4table 103'
+require_text "$WAN3" 'wan_transport_valid()'
+require_text "$WAN3" 'Both AREDN radios are configured as WAN clients'
+reject_text "$WAN3" '/dev/ttyACM'
+reject_text "$WAN3" '/dev/ttyUSB'
+reject_text "$WAN3" 'gpsd'
+reject_text "$WAN3" 'usb_passthrough'
+require_text files/etc/hotplug.d/net/95-wan3-manager 'wan3_enable'
+require_text files/etc/hotplug.d/net/95-wan3-manager '/sys/class/net/'
+
+# Private route tables, selected-route transaction, Babel, and Mesh WAN.
+CACHE=files/usr/local/bin/wan-route-cache
+require_text "$CACHE" 'wan)  printf '\''101|81'
+require_text "$CACHE" 'wan2) printf '\''102|82'
+require_text "$CACHE" 'wan3) printf '\''103|83'
+require_text "$CACHE" 'from "$source/32" lookup "$table"'
+require_text "$WAN3" 'LOCAL_TABLE=26'
+require_text "$WAN3" 'LOCAL_SUBNET_TABLE=27'
+require_text "$WAN3" 'BABEL_EXPORT_TABLE=28'
+require_text "$WAN3" 'REMOTE_MESH_TABLE=22'
+require_text "$WAN3" 'snapshot_routes'
+require_text "$WAN3" 'restore_route_snapshot'
+require_text "$WAN3" 'Publish table 28 last'
+require_text "$WAN3" 'table 22 is available'
+require_text "$WAN3" 'start_proxy "$device" "$want_shared"'
+
+# Adaptive SLA algorithm.
+SLA=files/usr/local/bin/wan-sla
+require_text "$SLA" 'WAN1_TRANSPORT=unknown'
+require_text "$SLA" 'wan-port-manager wan-transport'
+require_text "$SLA" 'for name in wan wan2 wan3'
+require_text "$SLA" 'low) echo 1'
+require_text "$SLA" 'medium) echo 2'
+require_text "$SLA" 'fast) echo 3'
+require_text "$SLA" 'standby_probe_failed'
+require_text "$SLA" 'failure_count'
+require_text "$SLA" 'promote_count'
+require_text "$SLA" 'promotion_ready'
+require_text "$SLA" 'hold_down'
+require_text "$SLA" 'result_ttl'
+require_text "$SLA" 'calibration_interval'
+require_text "$SLA" 'table 22 may provide the remote Mesh WAN fallback'
+require_text "$SLA" 'wan1_transport'
+
+# Tunnel guards and Babel race prevention.
+GUARD=files/usr/local/bin/wan-tunnel-guard
+require_text "$GUARD" 'RULE_PREF=45'
+require_text "$GUARD" 'BLACKHOLE_TABLE=99'
+require_text "$GUARD" 'ip -4 rule add pref "$RULE_PREF" iif "$dev" lookup "$BLACKHOLE_TABLE"'
+require_text "$GUARD" 'ip -6 rule add pref "$RULE_PREF" iif "$dev" lookup "$BLACKHOLE_TABLE"'
+require_text "$GUARD" 'redistribute proto 3 ip 0.0.0.0/0 eq 0 deny'
+require_text "$GUARD" 'in if %s ip 0.0.0.0/0 eq 0 deny'
+require_text "$GUARD" 'out if %s ip ::/0 eq 0 deny'
+
+# Calibration authentication boundary and exact bins/data limits.
+CAL=files/usr/local/bin/wan-calibrate
+require_text "$CAL" 'wan|wan2|wan3'
+require_text "$CAL" 'automatic)'
+require_text "$CAL" 'selection_mode'
+require_text "$CAL" 'measure 1048576 "1 MiB"'
+require_text "$CAL" 'measure 8388608 "8 MiB"'
+require_text "$CAL" 'measure 33554432 "32 MiB"'
+require_text "$CAL" 'value <= 5.0'
+require_text "$CAL" 'value <= 30.0'
+require_text "$CAL" '--max-redirs 0'
+require_text "$CAL" 'HTTP_CODE" = 206'
+require_text "$CAL" '--proxy "http://$PROXY_HOST:$PROXY_PORT"'
+
+# Authenticated UI and requested controls.
+for file in files/app/main/status/e/*.ut; do require_text "$file" 'if (!auth.isAdmin)'; done
+require_text files/app/main/status/e/ethernet-ports.ut 'hAP Ethernet port roles'
+require_text files/app/main/status/e/ethernet-ports.ut 'Apply with rollback'
+require_text files/app/main/status/e/ethernet-ports.ut 'Wi-Fi client on wlan0'
+require_text files/app/main/status/e/ethernet-ports.ut 'Wi-Fi client on wlan1'
+require_text files/app/main/status/e/ethernet-ports.ut 'no Ethernet port may also be assigned to WAN 1'
+require_text files/app/main/status/e/ethernet-ports.ut 'WAN 3 remains fixed to USB'
+require_text files/app/main/status/e/ethernet-ports.ut 'never edits gpsd'
+require_text files/app/main/status/e/usb-wan.ut 'Android phone → data USB cable → hAP USB host'
+require_text files/app/main/status/e/usb-wan.ut 'Proxy IPv4 address'
+require_text files/app/main/status/e/usb-wan.ut 'Proxy TCP port'
+require_text files/app/main/status/e/link-calibration.ut 'save-endpoint'
+require_text files/app/main/status/e/link-calibration.ut 'cannot supply or override the URL'
+require_text files/app/main/status/e/wan-policy.ut 'private table 101'
+require_text files/app/main/status/e/wan-policy.ut 'Tunnel ingress is always blocked'
+require_text files/app/main/status/e/wan-policy.ut 'Use remote Mesh WAN'
+
+# Documentation and two-repository contract.
+require_text README.md '`wan` — WAN 1'
+require_text README.md '`wan3` — WAN 3 fixed to a phone USB'
+require_text docs/port-roles-and-gps.md 'GPS safety contract'
+require_text docs/port-roles-and-gps.md 'radio0_mode=wan'
+require_text docs/port-roles-and-gps.md '/dev/ttyACM0'
+require_text docs/multiwan-usb-wan.md 'RNDIS / CDC Ethernet / CDC NCM'
+require_text docs/multiwan-link-calibration.md 'Maximum total transfer is approximately 41 MiB'
+require_text docs/multiwan-mesh-wan.md 'table 101'
+require_text docs/multiwan-mesh-wan.md 'table 22'
+require_text docs/multiwan-mesh-wan.md 'protocol-`boot`'
+require_text docs/multiwan-verification.md 'Disabled-install, radio, and GPS test'
+require_text docs/multiwan-verification.md 'Wi-Fi WAN ownership'
+require_text tools/openclaw-build-test-prompt.md 'mse-88/hub5'
+require_text tools/openclaw-build-test-prompt.md 'agent/pollywan-r6'
+require_text tools/openclaw-build-test-prompt.md 'Wi-Fi client'
+[ "$(wc -c < tools/openclaw-build-test-prompt.md)" -lt 2000 ] || fail 'OpenClaw prompt exceeds 2000 characters'
+require_text SYNC_SOURCE 'standalone_branch=agent/pollywan-r6'
+require_text SYNC_SOURCE 'integration_branch=agent/pollywan-r6'
+require_text SYNC_SOURCE 'sync_contract=standalone-root-equals-integration-subtree'
+require_text tools/sync-integration.sh 'rsync -rnic --delete --exclude .git'
+
+# No obsolete/broken bootstrap or r5 release claims.
+if grep -RIn --exclude-dir=.git --exclude=SYNC_SOURCE --exclude=verify.sh -E 'source\.tar\.gz\.b64|chunk-0[0-9]|PKG_RELEASE:=5|PollyWAN r5|0\.1\.0-r5' . >/tmp/pollywan-stale.$$; then
+    cat /tmp/pollywan-stale.$$ >&2
+    rm -f /tmp/pollywan-stale.$$
+    fail 'stale r5/bootstrap references remain'
+fi
+rm -f /tmp/pollywan-stale.$$
+
+# The manifest excludes SYNC_SOURCE itself to avoid self-reference.
+expected_manifest="$(sed -n 's/^content_manifest_sha256=//p' SYNC_SOURCE)"
+[ -n "$expected_manifest" ] || fail 'SYNC_SOURCE has no content manifest'
+actual_manifest="$(
+    find . -path './.git' -prune -o -type f ! -path './SYNC_SOURCE' -print |
+    LC_ALL=C sort |
+    while IFS= read -r file; do
+        if [ -x "$file" ]; then mode=755; else mode=644; fi
+        hash="$(sha256sum "$file" | awk '{print $1}')"
+        printf '%s  %s  %s\n' "$mode" "${file#./}" "$hash"
+    done |
+    sha256sum | awk '{print $1}'
+)"
+[ "$actual_manifest" = "$expected_manifest" ] || fail "content manifest mismatch: $actual_manifest != $expected_manifest"
+
+./tests/mock-port-manager.sh
+./tests/mock-route-cache.sh
+./tests/mock-tunnel-guard.sh
+./tests/test-selection-model.py
+
+python3 - <<'PY'
+from html.parser import HTMLParser
+from pathlib import Path
+from xml.etree import ElementTree
+
+root = Path('.')
+ElementTree.parse(root / 'files/www/apps/aredn-multiwan/icon.svg')
+
+class Parser(HTMLParser):
+    pass
+
+Parser().feed((root / 'files/www/apps/aredn-multiwan/help.html').read_text())
+for path in (root / 'files/app').rglob('*.ut'):
+    source = path.read_text()
+    if source.count('{%') != source.count('%}'):
+        raise SystemExit(f'unbalanced ucode template markers: {path}')
+print('markup/template balance passed')
+PY
+
+echo 'PollyWAN r6 static and mock verification passed'

@@ -1,5 +1,2 @@
 #!/bin/sh
-printf 'Status: 307 Temporary Redirect\r\n'
-printf 'Cache-Control: no-store\r\n'
-printf 'Location: /a/multiwan\r\n'
-printf '\r\n'
+printf 'Status: 302 Found\r\nLocation: /a/multiwan\r\nCache-Control: no-store\r\n\r\n'

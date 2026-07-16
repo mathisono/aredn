@@ -1,22 +1,68 @@
 #!/bin/sh /etc/rc.common
-# Manage the optional AREDN USB WAN after the base network is available.
+# PollyWAN controller. START is before Babel so the protocol-boot default guard
+# is installed before Babel imports table 28.
 
+USE_PROCD=1
 START=96
 STOP=10
 
-start()
+uci_enabled()
 {
-    /usr/local/bin/wan-route-cache all >/dev/null 2>&1 || true
-    /usr/local/bin/wan3-manager apply >/dev/null 2>&1 || true
+    [ "$(uci -c /etc/config.mesh -q get aredn.multiwan.enabled 2>/dev/null)" = 1 ]
 }
 
-stop()
+package_has_effects()
 {
-    /usr/local/bin/wan3-manager remove >/dev/null 2>&1 || true
+    [ -e /etc/aredn_include/.aredn-multiwan-ports ] && return 0
+    ip -4 route show table 26 default 2>/dev/null | grep -q '^default' && return 0
+    [ -r /var/run/wan3-redsocks.pid ] && return 0
+    nft list table inet aredn_wan3_proxy >/dev/null 2>&1 && return 0
+    return 1
 }
 
-reload()
+start_service()
 {
+    mkdir -p /tmp/wan-sla
+    rm -f /tmp/wan-sla/inhibit
+
+    if ! uci_enabled; then
+        if package_has_effects; then
+            /usr/local/bin/wan-port-manager disable >/dev/null 2>&1 || true
+            /usr/local/bin/wan3-manager disable >/dev/null 2>&1 || true
+            /usr/local/bin/wan-tunnel-guard remove >/dev/null 2>&1 || true
+        fi
+        return 0
+    fi
+
+    /usr/local/bin/wan-port-manager reconcile >/dev/null 2>&1 || true
     /usr/local/bin/wan-route-cache all >/dev/null 2>&1 || true
+    /usr/local/bin/wan-tunnel-guard apply >/dev/null 2>&1 || true
     /usr/local/bin/wan3-manager apply >/dev/null 2>&1 || true
+
+    procd_open_instance pollywan
+    procd_set_param command /usr/local/bin/wan-sla daemon
+    procd_set_param respawn 3600 5 5
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_close_instance
+}
+
+stop_service()
+{
+    mkdir -p /tmp/wan-sla
+    touch /tmp/wan-sla/inhibit
+    # Never leave a stale gateway advertised when monitoring is stopped.
+    if uci_enabled; then
+        /usr/local/bin/wan3-manager withdraw 'PollyWAN service stopped' 0 >/dev/null 2>&1 || true
+        /usr/local/bin/wan-tunnel-guard apply >/dev/null 2>&1 || true
+    else
+        /usr/local/bin/wan3-manager disable >/dev/null 2>&1 || true
+        /usr/local/bin/wan-tunnel-guard remove >/dev/null 2>&1 || true
+    fi
+}
+
+reload_service()
+{
+    stop
+    start
 }

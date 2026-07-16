@@ -1,0 +1,478 @@
+#!/bin/sh
+# Adaptive AREDN local-WAN selector. Reachability is a hard gate; bounded
+# calibration results provide low/medium/fast classes. A better path must pass
+# promotion hysteresis before it replaces the selected local default.
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+STATE_DIR=/tmp/wan-sla
+STATUS_FILE="$STATE_DIR/status.json"
+CANDIDATE_FILE="$STATE_DIR/candidates.tsv"
+LOCK_DIR="$STATE_DIR/.lock"
+PROMOTE_FILE="$STATE_DIR/promote-candidate"
+STREAK_FILE="$STATE_DIR/promote-streak"
+SWITCH_FILE="$STATE_DIR/last-switch"
+INHIBIT_FILE="$STATE_DIR/inhibit"
+CONFIG_PACKAGE=aredn
+CONFIG_SECTION=multiwan
+REMOTE_MESH_TABLE=22
+WAN1_TRANSPORT=unknown
+
+mkdir -p "$STATE_DIR" || exit 1
+
+uci_get()
+{
+    uci -c /etc/config.mesh -q get "$CONFIG_PACKAGE.$CONFIG_SECTION.$1" 2>/dev/null || true
+}
+
+aredn_wan_get()
+{
+    uci -c /etc/config.mesh -q get "aredn.@wan[0].$1" 2>/dev/null || true
+}
+
+json_escape()
+{
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s/\n/\\n/g'
+}
+
+package_has_effects()
+{
+    [ -e /etc/aredn_include/.aredn-multiwan-ports ] && return 0
+    ip -4 route show table 26 default 2>/dev/null | grep -q '^default' && return 0
+    [ -r /var/run/wan3-redsocks.pid ] && return 0
+    ubus call network.interface.wan3 status >/dev/null 2>&1 && return 0
+    return 1
+}
+
+valid_uint()
+{
+    case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac
+}
+
+number_setting()
+{
+    name="$1"; default="$2"; minimum="$3"; maximum="$4"
+    value="$(uci_get "$name")"
+    valid_uint "$value" || value="$default"
+    [ "$value" -ge "$minimum" ] || value="$minimum"
+    [ "$value" -le "$maximum" ] || value="$maximum"
+    printf '%s\n' "$value"
+}
+
+bin_score()
+{
+    case "$1" in low) echo 1 ;; medium) echo 2 ;; fast) echo 3 ;; *) echo 0 ;; esac
+}
+
+candidate_enabled()
+{
+    case "$1" in
+        wan) [ "$(uci_get wan_enable)" != 0 ] ;;
+        wan2) [ "$(uci_get wan2_enable)" != 0 ] ;;
+        wan3) [ "$(uci_get wan3_enable)" = 1 ] ;;
+        *) return 1 ;;
+    esac
+}
+
+valid_ipv4()
+{
+    printf '%s\n' "$1" | awk -F. '
+        NF != 4 { bad = 1 }
+        { for (i = 1; i <= 4; i++) if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) bad = 1 }
+        END { exit bad }
+    '
+}
+
+inspect_candidate()
+{
+    /usr/local/bin/wan3-manager inspect "$1" 2>/dev/null
+}
+
+calibration_configured()
+{
+    host="$(uci_get calibration_host)"
+    url="$(uci_get calibration_url)"
+    case "$host" in ''|*[!A-Za-z0-9.-]*) return 1 ;; esac
+    case "$url" in "https://$host/"?*) return 0 ;; *) return 1 ;; esac
+}
+
+probe_path()
+{
+    name="$1"; values="$2"
+    old_ifs="$IFS"; IFS='|'; set -- $values; IFS="$old_ifs"
+    device="$1"; source="$2"; gateway="${3:-}"
+
+    if calibration_configured; then
+        url="$(uci_get calibration_url)"
+        set -- --silent --show-error --fail --proto '=https' --proto-redir '=https' --max-redirs 0 \
+            --connect-timeout 5 --max-time 12 --interface "$source" --header 'Accept-Encoding: identity' \
+            --range 0-0 --output /dev/null --write-out '%{http_code}|%{size_download}'
+        if [ "$name" = wan3 ] && [ "$(uci_get wan3_proxy_enable)" = 1 ]; then
+            proxy_host="$(uci_get wan3_proxy_host)"
+            proxy_port="$(uci_get wan3_proxy_port)"
+            proxy_user="$(uci_get wan3_proxy_username)"
+            proxy_pass="$(uci_get wan3_proxy_password)"
+            [ -n "$proxy_host" ] || proxy_host=192.168.49.1
+            [ -n "$proxy_port" ] || proxy_port=8000
+            valid_ipv4 "$proxy_host" || return 1
+            set -- "$@" --proxy "http://$proxy_host:$proxy_port" --noproxy ''
+            [ -n "$proxy_user" ] && set -- "$@" --proxy-user "$proxy_user:$proxy_pass"
+        else
+            set -- "$@" --proxy ''
+        fi
+        output="$(curl "$@" "$url" 2>/dev/null || true)"
+        [ "$output" = '206|1' ]
+        return
+    fi
+
+    # Availability mode can work before a calibration object is configured.
+    # Adaptive mode will not select a path until a fresh speed class exists.
+    if valid_ipv4 "$gateway"; then
+        ping -c 1 -W 2 -I "$device" "$gateway" >/dev/null 2>&1
+    else
+        return 0
+    fi
+}
+
+failure_count()
+{
+    name="$1"; action="$2"; file="$STATE_DIR/failures.$name"
+    count="$(cat "$file" 2>/dev/null || true)"
+    valid_uint "$count" || count=0
+    if [ "$action" = reset ]; then count=0; else count=$((count + 1)); fi
+    printf '%s\n' "$count" > "$file"
+    printf '%s\n' "$count"
+}
+
+result_values()
+{
+    name="$1"; values="$2"; ttl="$3"
+    result="/tmp/wan-calibration/$name.result.json"
+    [ -r "$result" ] || return 1
+    old_ifs="$IFS"; IFS='|'; set -- $values; IFS="$old_ifs"
+    source="$2"; gateway="${3:-}"
+
+    timestamp="$(jsonfilter -i "$result" -e '@.timestamp' 2>/dev/null || true)"
+    result_source="$(jsonfilter -i "$result" -e '@.source' 2>/dev/null || true)"
+    result_gateway="$(jsonfilter -i "$result" -e '@.gateway' 2>/dev/null || true)"
+    bin="$(jsonfilter -i "$result" -e '@.bin' 2>/dev/null || true)"
+    mbps="$(jsonfilter -i "$result" -e '@.mbps' 2>/dev/null || true)"
+    valid_uint "$timestamp" || return 1
+    case "$bin" in low|medium|fast) ;; *) return 1 ;; esac
+    [ "$result_source" = "$source" ] || return 1
+    if [ "$result_gateway" != '-' ] && [ -n "$gateway" ] && [ "$result_gateway" != "$gateway" ]; then return 1; fi
+    now="$(date +%s)"; age=$((now - timestamp))
+    [ "$age" -ge 0 ] || return 1
+    [ "$age" -le "$ttl" ] || return 1
+    printf '%s|%s|%s|%s\n' "$bin" "$mbps" "$timestamp" "$age"
+}
+
+maybe_calibrate()
+{
+    name="$1"; interval="$2"
+    calibration_configured || return 0
+    result="/tmp/wan-calibration/$name.result.json"
+    timestamp="$(jsonfilter -i "$result" -e '@.timestamp' 2>/dev/null || true)"
+    valid_uint "$timestamp" || timestamp=0
+    now="$(date +%s)"; age=$((now - timestamp))
+    [ "$age" -ge "$interval" ] || return 0
+    /usr/local/bin/wan-calibrate "$name" automatic >/dev/null 2>&1 || true
+}
+
+evaluate_candidate()
+{
+    name="$1"; mode="$2"; min_score="$3"; result_ttl="$4"; calibration_interval="$5"; failure_limit="$6"
+
+    if ! candidate_enabled "$name"; then
+        printf '%s|0|0|unknown|0|0||disabled|0\n' "$name"
+        return
+    fi
+    values="$(inspect_candidate "$name" 2>/dev/null || true)"
+    if [ -z "$values" ]; then
+        failure_count "$name" fail >/dev/null
+        printf '%s|0|0|down|0|0||interface_down|0\n' "$name"
+        return
+    fi
+    old_ifs="$IFS"; IFS='|'; set -- $values; IFS="$old_ifs"
+    device="$1"
+
+    current_active="$(uci_get active)"
+    probe_ok=0
+    if probe_path "$name" "$values"; then
+        probe_ok=1
+        failures="$(failure_count "$name" reset)"
+        healthy=1; reason=reachable
+    else
+        failures="$(failure_count "$name" fail)"
+        if [ "$failures" -ge "$failure_limit" ]; then
+            healthy=0; reason=probe_failed
+        elif [ "$name" = "$current_active" ]; then
+            # A selected path receives the configured failure hysteresis. A
+            # currently failing standby is never eligible for promotion.
+            healthy=1; reason=probe_retry
+        else
+            healthy=0; reason=standby_probe_failed
+        fi
+    fi
+
+    if [ "$probe_ok" = 1 ] && [ "$mode" = adaptive ]; then maybe_calibrate "$name" "$calibration_interval"; fi
+
+    result="$(result_values "$name" "$values" "$result_ttl" 2>/dev/null || true)"
+    if [ -n "$result" ]; then
+        old_ifs="$IFS"; IFS='|'; set -- $result; IFS="$old_ifs"
+        bin="$1"; mbps="$2"; age="$4"; raw_score="$(bin_score "$bin")"
+        printf '%s\n' "$mbps" | awk 'BEGIN { ok = 0 } /^[0-9]+([.][0-9]+)?$/ { ok = 1 } END { exit !ok }' || mbps=0
+    else
+        bin=unknown; mbps=0; age=0; raw_score=0
+    fi
+
+    score=0
+    if [ "$healthy" = 1 ]; then
+        if [ "$mode" = availability ]; then
+            score=1
+        elif [ "$mode" = adaptive ] && [ "$raw_score" -ge "$min_score" ]; then
+            score="$raw_score"
+        fi
+    fi
+    printf '%s|1|%s|%s|%s|%s|%s|%s|%s\n' "$name" "$healthy" "$bin" "$score" "$mbps" "$device" "$reason" "$age"
+}
+
+read_active_line()
+{
+    active="$1"
+    awk -F'|' -v active="$active" '$1 == active { print; exit }' "$CANDIDATE_FILE"
+}
+
+choose_candidate()
+{
+    preferred="$1"
+    best=''; best_score=-1
+    while IFS='|' read -r name configured healthy bin score mbps device reason age; do
+        [ "$configured" = 1 ] || continue
+        [ "$healthy" = 1 ] || continue
+        [ "$score" -gt 0 ] || continue
+        if [ "$score" -gt "$best_score" ] || { [ "$score" -eq "$best_score" ] && [ "$name" = "$preferred" ]; }; then
+            best="$name"; best_score="$score"
+        fi
+    done < "$CANDIDATE_FILE"
+    printf '%s|%s\n' "$best" "$best_score"
+}
+
+reset_promotion()
+{
+    : > "$PROMOTE_FILE"
+    printf '0\n' > "$STREAK_FILE"
+}
+
+promotion_ready()
+{
+    candidate="$1"; required="$2"
+    current="$(cat "$PROMOTE_FILE" 2>/dev/null || true)"
+    streak="$(cat "$STREAK_FILE" 2>/dev/null || true)"
+    valid_uint "$streak" || streak=0
+    if [ "$current" = "$candidate" ]; then streak=$((streak + 1)); else current="$candidate"; streak=1; fi
+    printf '%s\n' "$current" > "$PROMOTE_FILE"
+    printf '%s\n' "$streak" > "$STREAK_FILE"
+    [ "$streak" -ge "$required" ]
+}
+
+switch_to()
+{
+    name="$1"
+    line="$(read_active_line "$name")"
+    [ -n "$line" ] || return 1
+    old_ifs="$IFS"; IFS='|'; set -- $line; IFS="$old_ifs"
+    bin="${4:-unknown}"
+    /usr/local/bin/wan3-manager select "$name" 1 "$bin" 1 || return 1
+    date +%s > "$SWITCH_FILE"
+    reset_promotion
+}
+
+write_status()
+{
+    mode="$1"; active="$2"; selected_bin="$3"; message="$4"
+    table22=0; table28=0
+    ip -4 route show table "$REMOTE_MESH_TABLE" default | grep -q '^default' && table22=1
+    ip -4 route show table 28 default | grep -q '^default' && table28=1
+    mesh_to_wan="$(aredn_wan_get mesh_to_local_wan)"; [ "$mesh_to_wan" = 1 ] || mesh_to_wan=0
+    lan_to_mesh="$(aredn_wan_get lan_to_remote_wan)"; [ "$lan_to_mesh" = 1 ] || lan_to_mesh=0
+
+    tmp="$STATUS_FILE.tmp.$$"
+    {
+        printf '{"mode":"%s","active":"%s","selected_bin":"%s","wan1_transport":"%s","message":"%s","table28_published":%s,"remote_mesh_default":%s,"mesh_to_wan":%s,"lan_to_mesh_wan":%s,"tunnel_guard":true,"time":"%s","candidates":[' \
+            "$(json_escape "$mode")" "$(json_escape "$active")" "$(json_escape "$selected_bin")" "$(json_escape "$WAN1_TRANSPORT")" "$(json_escape "$message")" \
+            "$table28" "$table22" "$mesh_to_wan" "$lan_to_mesh" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        first=1
+        while IFS='|' read -r name configured healthy bin score mbps device reason age; do
+            [ "$first" = 1 ] || printf ','
+            first=0
+            printf '{"name":"%s","configured":%s,"healthy":%s,"bin":"%s","score":%s,"mbps":%s,"device":"%s","reason":"%s","result_age":%s}' \
+                "$(json_escape "$name")" "$configured" "$healthy" "$(json_escape "$bin")" "$score" "$mbps" \
+                "$(json_escape "$device")" "$(json_escape "$reason")" "$age"
+        done < "$CANDIDATE_FILE"
+        printf ']}\n'
+    } > "$tmp" && mv "$tmp" "$STATUS_FILE"
+}
+
+acquire_eval_lock()
+{
+    if mkdir "$LOCK_DIR" 2>/dev/null; then printf '%s\n' "$$" > "$LOCK_DIR/pid"; return 0; fi
+    oldpid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+    case "$oldpid" in ''|*[!0-9]*) ;; *) kill -0 "$oldpid" 2>/dev/null && return 1 ;; esac
+    rm -rf "$LOCK_DIR"
+    mkdir "$LOCK_DIR" 2>/dev/null || return 1
+    printf '%s\n' "$$" > "$LOCK_DIR/pid"
+}
+
+evaluate_once()
+{
+    [ -e "$INHIBIT_FILE" ] && return 0
+    acquire_eval_lock || return 3
+    if [ -e "$INHIBIT_FILE" ]; then
+        rm -rf "$LOCK_DIR"
+        return 0
+    fi
+    trap 'rm -rf "$LOCK_DIR"' EXIT HUP INT TERM
+
+    /usr/local/bin/wan-tunnel-guard apply >/dev/null 2>&1 || true
+    : > "$CANDIDATE_FILE"
+
+    mode="$(uci_get selection_mode)"; case "$mode" in manual|availability|adaptive) ;; *) mode=manual ;; esac
+    if [ "$(uci_get enabled)" != 1 ]; then
+        if package_has_effects; then
+            /usr/local/bin/wan-port-manager disable >/dev/null 2>&1 || true
+            /usr/local/bin/wan3-manager disable >/dev/null 2>&1 || true
+            /usr/local/bin/wan-tunnel-guard remove >/dev/null 2>&1 || true
+            message='controller disabled; package-created network state removed and WAN 1 restored'
+        else
+            message='controller disabled; installation is inert and ordinary AREDN networking is unchanged'
+        fi
+        : > "$CANDIDATE_FILE"
+        write_status "$mode" "$(uci_get active)" "$(uci_get active_bin)" "$message"
+        rm -rf "$LOCK_DIR"; trap - EXIT HUP INT TERM
+        return 0
+    fi
+
+    WAN1_TRANSPORT="$(/usr/local/bin/wan-port-manager wan-transport 2>/dev/null)"
+    if [ $? -ne 0 ]; then
+        /usr/local/bin/wan3-manager withdraw 'Both AREDN radios are configured as WAN clients' 1 >/dev/null 2>&1 || true
+        : > "$CANDIDATE_FILE"
+        write_status "$mode" "$(uci_get active)" none 'invalid AREDN radio configuration: both radios are WAN clients'
+        rm -rf "$LOCK_DIR"; trap - EXIT HUP INT TERM
+        return 1
+    fi
+
+    /usr/local/bin/wan3-manager usb-apply >/dev/null 2>&1 || true
+    /usr/local/bin/wan-route-cache all >/dev/null 2>&1 || true
+
+    preferred="$(uci_get preferred_wan)"; case "$preferred" in wan|wan2|wan3) ;; *) preferred=wan ;; esac
+    minimum="$(uci_get selection_min_bin)"; case "$minimum" in low|medium|fast) ;; *) minimum=low ;; esac
+    min_score="$(bin_score "$minimum")"
+    result_ttl="$(number_setting result_ttl 28800 300 86400)"
+    calibration_interval="$(number_setting calibration_interval 21600 300 86400)"
+    # Never let a configured refresh interval exceed result lifetime; direct
+    # UCI edits must not create a long window with every class stale.
+    [ "$calibration_interval" -le "$result_ttl" ] || calibration_interval="$result_ttl"
+    failure_limit="$(number_setting failure_count 2 1 10)"
+    promote_count="$(number_setting promote_count 2 1 10)"
+    hold_down="$(number_setting hold_down 120 0 3600)"
+
+    for name in wan wan2 wan3; do
+        evaluate_candidate "$name" "$mode" "$min_score" "$result_ttl" "$calibration_interval" "$failure_limit" >> "$CANDIDATE_FILE"
+    done
+
+    active="$(uci_get active)"; case "$active" in wan|wan2|wan3|mesh|none) ;; *) active=wan ;; esac
+    chosen="$(choose_candidate "$preferred")"
+    old_ifs="$IFS"; IFS='|'; set -- $chosen; IFS="$old_ifs"
+    best="$1"
+
+    active_line="$(read_active_line "$active")"
+    active_healthy=0; active_score=0; active_bin=unknown
+    if [ -n "$active_line" ]; then
+        old_ifs="$IFS"; IFS='|'; set -- $active_line; IFS="$old_ifs"
+        active_healthy="$3"; active_bin="$4"; active_score="$5"
+    fi
+
+    message='status only'
+    if [ "$mode" = manual ]; then
+        if [ "$active_healthy" = 1 ]; then
+            /usr/local/bin/wan3-manager select "$active" 0 "$active_bin" 1 >/dev/null 2>&1 || true
+            message="manual selection retained: $active"
+        else
+            /usr/local/bin/wan3-manager withdraw 'Manual selected local WAN failed' 1 >/dev/null 2>&1 || true
+            active="$(uci_get active)"; active_bin=none
+            message='manual selected local WAN failed; local defaults and Babel export withdrawn'
+        fi
+        reset_promotion
+    elif [ -z "$best" ]; then
+        /usr/local/bin/wan3-manager withdraw 'No local WAN meets health and selection criteria' 1 >/dev/null 2>&1 || true
+        active="$(uci_get active)"; active_bin=none
+        message='all local WANs withdrawn; table 22 may provide the remote Mesh WAN fallback'
+        reset_promotion
+    elif [ "$active" = mesh ] || [ "$active" = none ] || [ "$active_healthy" != 1 ] || [ "$active_score" -eq 0 ]; then
+        if switch_to "$best" >/dev/null 2>&1; then
+            active="$(uci_get active)"
+            new_line="$(read_active_line "$active")"
+            [ -n "$new_line" ] && active_bin="$(printf '%s' "$new_line" | awk -F'|' '{print $4}')" || active_bin=none
+            message="hard failure or ineligible path: selected $active immediately"
+        else
+            /usr/local/bin/wan3-manager withdraw 'Immediate fallback candidate failed' 1 >/dev/null 2>&1 || true
+            active="$(uci_get active)"; active_bin=none
+            message='fallback candidate failed; local defaults withdrawn'
+        fi
+    elif [ "$best" = "$active" ]; then
+        /usr/local/bin/wan3-manager select "$active" 0 "$active_bin" 1 >/dev/null 2>&1 || true
+        message="$active remains the best eligible local path"
+        reset_promotion
+    else
+        target_line="$(read_active_line "$best")"
+        old_ifs="$IFS"; IFS='|'; set -- $target_line; IFS="$old_ifs"
+        target_score="$5"
+        should_promote=0
+        if [ "$target_score" -gt "$active_score" ]; then should_promote=1; fi
+        if [ "$target_score" -eq "$active_score" ] && [ "$best" = "$preferred" ]; then should_promote=1; fi
+        last_switch="$(cat "$SWITCH_FILE" 2>/dev/null || true)"; valid_uint "$last_switch" || last_switch=0
+        now="$(date +%s)"
+        if [ "$should_promote" = 1 ] && [ $((now - last_switch)) -ge "$hold_down" ]; then
+            if promotion_ready "$best" "$promote_count"; then
+                if switch_to "$best" >/dev/null 2>&1; then
+                    active="$(uci_get active)"
+                    message="promoted $active after $promote_count consecutive observations"
+                else
+                    message="$best passed promotion but route installation failed; $active retained"
+                fi
+            else
+                message="$best is better; waiting for promotion hysteresis"
+            fi
+        else
+            message="$active retained by tie preference or hold-down"
+            reset_promotion
+        fi
+    fi
+
+    active="$(uci_get active)"
+    active_line="$(read_active_line "$active")"
+    if [ -n "$active_line" ]; then active_bin="$(printf '%s' "$active_line" | awk -F'|' '{print $4}')"; else active_bin=none; fi
+    write_status "$mode" "$active" "$active_bin" "$message"
+    rm -rf "$LOCK_DIR"
+    trap - EXIT HUP INT TERM
+}
+
+daemon_loop()
+{
+    while [ "$(uci_get enabled)" = 1 ]; do
+        [ -e "$INHIBIT_FILE" ] || evaluate_once || true
+        interval="$(number_setting health_interval 30 10 3600)"
+        sleep "$interval"
+    done
+    evaluate_once || true
+}
+
+case "${1:-once}" in
+    once|evaluate) evaluate_once ;;
+    daemon) daemon_loop ;;
+    status) [ -r "$STATUS_FILE" ] && cat "$STATUS_FILE" || printf '{"status":"unknown"}\n' ;;
+    *) echo "usage: $0 {once|daemon|status}" >&2; exit 2 ;;
+esac

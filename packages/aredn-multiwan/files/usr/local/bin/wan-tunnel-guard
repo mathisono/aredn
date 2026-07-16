@@ -1,0 +1,177 @@
+#!/bin/sh
+# Keep AREDN tunnel interfaces on mesh routes only. Internet defaults in
+# tables 26, 28 and 22 must never be reachable from a WireGuard/tun ingress,
+# and Babel must neither learn nor send 0.0.0.0/0 on those interfaces.
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+STATE_DIR=/tmp/wan-tunnel-guard
+STATE_FILE="$STATE_DIR/devices"
+BABEL_DENY=/etc/aredn_include/babel-deny.conf
+BEGIN_MARKER='# BEGIN AREDN-MULTIWAN-TUNNEL-GUARD'
+END_MARKER='# END AREDN-MULTIWAN-TUNNEL-GUARD'
+RULE_PREF=45
+BLACKHOLE_TABLE=99
+CONFIG_PACKAGE=aredn
+CONFIG_SECTION=multiwan
+
+mkdir -p "$STATE_DIR" /etc/aredn_include || exit 1
+
+valid_device()
+{
+    case "$1" in ''|*[!A-Za-z0-9_.:-]*) return 1 ;; *) return 0 ;; esac
+}
+
+collect_devices()
+{
+    for path in /sys/class/net/*; do
+        [ -e "$path" ] || continue
+        dev="${path##*/}"
+        case "$dev" in
+            wg*|tun[0-9]*|tun-*) printf '%s\n' "$dev" ;;
+        esac
+    done | sort -u
+}
+
+remove_rule()
+{
+    dev="$1"
+    valid_device "$dev" || return 0
+    while ip -4 rule del pref "$RULE_PREF" iif "$dev" lookup "$BLACKHOLE_TABLE" >/dev/null 2>&1; do :; done
+    while ip -6 rule del pref "$RULE_PREF" iif "$dev" lookup "$BLACKHOLE_TABLE" >/dev/null 2>&1; do :; done
+}
+
+install_rule()
+{
+    dev="$1"
+    valid_device "$dev" || return 0
+    remove_rule "$dev"
+    ip -4 route replace blackhole default table "$BLACKHOLE_TABLE" >/dev/null 2>&1 || true
+    ip -6 route replace blackhole default table "$BLACKHOLE_TABLE" >/dev/null 2>&1 || true
+    # AREDN IPv4 mesh tables 29/20/21 remain ahead at preferences 10/20/30.
+    # The tunnel rule is ahead of local/remote Internet defaults. IPv6 has no
+    # AREDN payload route policy, so tunnel IPv6 falls directly into table 99.
+    ip -4 rule add pref "$RULE_PREF" iif "$dev" lookup "$BLACKHOLE_TABLE" >/dev/null 2>&1 || true
+    ip -6 rule add pref "$RULE_PREF" iif "$dev" lookup "$BLACKHOLE_TABLE" >/dev/null 2>&1 || true
+}
+
+strip_managed_block()
+{
+    source="$1"
+    output="$2"
+    if [ ! -f "$source" ]; then
+        : > "$output"
+        return
+    fi
+    awk -v begin="$BEGIN_MARKER" -v end="$END_MARKER" '
+        $0 == begin { managed = 1; next }
+        $0 == end { managed = 0; next }
+        !managed { print }
+    ' "$source" > "$output"
+}
+
+install_babel_file_if_changed()
+{
+    new_file="$1"
+    changed=0
+    if [ -f "$BABEL_DENY" ]; then
+        cmp -s "$new_file" "$BABEL_DENY" || changed=1
+    elif [ -s "$new_file" ]; then
+        changed=1
+    fi
+
+    [ "$changed" = 1 ] || return 0
+    if [ -s "$new_file" ]; then
+        cp "$new_file" "$BABEL_DENY"
+        chmod 0644 "$BABEL_DENY"
+    else
+        rm -f "$BABEL_DENY"
+    fi
+
+    # Do not start Babel early during boot. If it is already running, restart
+    # so the generated in/out default-route filters take effect immediately.
+    if pidof babeld >/dev/null 2>&1 && [ -x /etc/init.d/babel ]; then
+        (/etc/init.d/babel restart >/dev/null 2>&1) &
+    fi
+}
+
+apply_guard()
+{
+    controller_enabled="$(uci -c /etc/config.mesh -q get "$CONFIG_PACKAGE.$CONFIG_SECTION.enabled" 2>/dev/null || true)"
+    if [ "$controller_enabled" != 1 ]; then
+        remove_guard
+        return 0
+    fi
+    devices="$(collect_devices)"
+
+    if [ -r "$STATE_FILE" ]; then
+        while IFS= read -r old; do
+            [ -n "$old" ] && remove_rule "$old"
+        done < "$STATE_FILE"
+    fi
+    for dev in $devices; do install_rule "$dev"; done
+    [ -n "$devices" ] || ip -6 route del blackhole default table "$BLACKHOLE_TABLE" >/dev/null 2>&1 || true
+    printf '%s\n' "$devices" | sed '/^$/d' > "$STATE_FILE"
+
+    base="$STATE_DIR/babel.base.$$"
+    new="$STATE_DIR/babel.new.$$"
+    strip_managed_block "$BABEL_DENY" "$base"
+    cat "$base" > "$new"
+    if [ -n "$devices" ] || [ "$controller_enabled" = 1 ]; then
+        {
+            printf '%s\n' "$BEGIN_MARKER"
+            if [ "$controller_enabled" = 1 ]; then
+                # AREDN's stock wan hotplug route is protocol boot (3), while
+                # this package publishes only a qualified protocol-static route.
+                # Denying a boot default closes the hotplug/Babel race and keeps
+                # a stale or unqualified stock route from being advertised.
+                printf '%s\n' '# Only the package-qualified protocol-static table-28 default may be redistributed.'
+                printf '%s\n' 'redistribute proto 3 ip 0.0.0.0/0 eq 0 deny'
+            fi
+            if [ -n "$devices" ]; then
+                printf '%s\n' '# Tunnel peers may exchange mesh routes, but never an Internet default.'
+                for dev in $devices; do
+                    printf 'in if %s ip 0.0.0.0/0 eq 0 deny\n' "$dev"
+                    printf 'out if %s ip 0.0.0.0/0 eq 0 deny\n' "$dev"
+                    printf 'in if %s ip ::/0 eq 0 deny\n' "$dev"
+                    printf 'out if %s ip ::/0 eq 0 deny\n' "$dev"
+                done
+            fi
+            printf '%s\n' "$END_MARKER"
+        } >> "$new"
+    fi
+    install_babel_file_if_changed "$new"
+    rm -f "$base" "$new"
+}
+
+remove_guard()
+{
+    if [ -r "$STATE_FILE" ]; then
+        while IFS= read -r old; do
+            [ -n "$old" ] && remove_rule "$old"
+        done < "$STATE_FILE"
+    fi
+    for dev in $(collect_devices); do remove_rule "$dev"; done
+    ip -6 route del blackhole default table "$BLACKHOLE_TABLE" >/dev/null 2>&1 || true
+    rm -f "$STATE_FILE"
+
+    base="$STATE_DIR/babel.base.$$"
+    strip_managed_block "$BABEL_DENY" "$base"
+    install_babel_file_if_changed "$base"
+    rm -f "$base"
+}
+
+case "${1:-apply}" in
+    apply) apply_guard ;;
+    remove|stop) remove_guard ;;
+    status)
+        printf 'devices=%s\n' "$(tr '\n' ' ' < "$STATE_FILE" 2>/dev/null || true)"
+        printf '%s\n' 'IPv4 guards:'
+        ip -4 rule show | grep "^$RULE_PREF:" || true
+        printf '%s\n' 'IPv6 guards:'
+        ip -6 rule show | grep "^$RULE_PREF:" || true
+        ;;
+    *) echo "usage: $0 {apply|remove|status}" >&2; exit 2 ;;
+esac

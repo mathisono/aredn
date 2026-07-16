@@ -1,9 +1,14 @@
 #!/bin/sh
-# Preserve each WAN's netifd-learned default in a private table so manual
-# switching still works after the selected route replaces the main default.
+# Preserve each WAN's netifd-learned connected route and default in an
+# independent table. Source-policy rules make bound health/calibration probes
+# stay on the requested WAN even while another local WAN owns the default.
 
+set -u
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH LC_ALL=C
+
+STATE_DIR=/tmp/wan-route-cache
+mkdir -p "$STATE_DIR" || exit 1
 
 valid_name()
 {
@@ -19,38 +24,94 @@ valid_ipv4()
     '
 }
 
+wan_values()
+{
+    case "$1" in
+        wan)  printf '101|81\n' ;;
+        wan2) printf '102|82\n' ;;
+        wan3) printf '103|83\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+remove_source_rule()
+{
+    name="$1"
+    values="$(wan_values "$name")" || return 0
+    old_ifs="$IFS"; IFS='|'; set -- $values; IFS="$old_ifs"
+    table="$1"; pref="$2"
+    state="$STATE_DIR/$name.source"
+    old_source="$(cat "$state" 2>/dev/null || true)"
+    if valid_ipv4 "$old_source"; then
+        while ip -4 rule del pref "$pref" from "$old_source/32" lookup "$table" >/dev/null 2>&1; do :; done
+    fi
+    # Also remove a stale rule when the state file was lost.
+    while ip -4 rule del pref "$pref" lookup "$table" >/dev/null 2>&1; do :; done
+    rm -f "$state"
+}
+
+connected_prefix()
+{
+    device="$1"
+    source="$2"
+    ip -4 route show table all dev "$device" scope link 2>/dev/null | \
+        awk -v source="$source" '$1 != "default" && $0 ~ ("src " source) { print $1; exit }'
+}
+
 cache_one()
 {
     name="$1"
-    table="$2"
-    status="$(ubus call "network.interface.$name" status 2>/dev/null)" || return 0
+    values="$(wan_values "$name")" || return 1
+    old_ifs="$IFS"; IFS='|'; set -- $values; IFS="$old_ifs"
+    table="$1"; pref="$2"
+
+    status="$(ubus call "network.interface.$name" status 2>/dev/null)" || { remove_source_rule "$name"; return 0; }
     up="$(printf '%s' "$status" | jsonfilter -e '@.up' 2>/dev/null || true)"
-    [ "$up" = true ] || [ "$up" = 1 ] || return 0
+    [ "$up" = true ] || [ "$up" = 1 ] || { remove_source_rule "$name"; return 0; }
 
     device="$(printf '%s' "$status" | jsonfilter -e '@.l3_device' 2>/dev/null || true)"
     source="$(printf '%s' "$status" | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null || true)"
     gateway="$(printf '%s' "$status" | jsonfilter -e "@.route[@.target='0.0.0.0'].nexthop" 2>/dev/null | head -n 1 || true)"
     [ -n "$gateway" ] || gateway="$(printf '%s' "$status" | jsonfilter -e "@.inactive.route[@.target='0.0.0.0'].nexthop" 2>/dev/null | head -n 1 || true)"
 
-    valid_name "$device" || return 0
-    valid_ipv4 "$source" || return 0
+    valid_name "$device" || { remove_source_rule "$name"; return 0; }
+    valid_ipv4 "$source" || { remove_source_rule "$name"; return 0; }
 
-    if valid_ipv4 "$gateway"; then
-        # The connected subnet may live in netifd's main table while this
-        # cached default lives in a private table, so mark the gateway on-link.
-        ip -4 route replace table "$table" default via "$gateway" dev "$device" src "$source" metric 10 onlink proto static >/dev/null 2>&1 || true
-    else
-        ip -4 route replace table "$table" default dev "$device" src "$source" metric 10 proto static >/dev/null 2>&1 || true
+    # netifd owns table 103 for the dynamic USB interface. Rebuild only the
+    # package-owned Ethernet tables, but install source rules for all three.
+    if [ "$name" != wan3 ]; then
+        ip -4 route flush table "$table" >/dev/null 2>&1 || true
+        prefix="$(connected_prefix "$device" "$source")"
+        case "$prefix" in
+            *.*/*) ip -4 route replace table "$table" "$prefix" dev "$device" src "$source" scope link proto static >/dev/null 2>&1 || true ;;
+        esac
+
+        if valid_ipv4 "$gateway"; then
+            ip -4 route replace table "$table" default via "$gateway" dev "$device" src "$source" metric 10 onlink proto static >/dev/null 2>&1 || true
+        else
+            ip -4 route replace table "$table" default dev "$device" src "$source" metric 10 proto static >/dev/null 2>&1 || true
+        fi
     fi
+
+    remove_source_rule "$name"
+    ip -4 rule add pref "$pref" from "$source/32" lookup "$table" >/dev/null 2>&1 || true
+    printf '%s\n' "$source" > "$STATE_DIR/$name.source"
+}
+
+remove_all()
+{
+    for name in wan wan2 wan3; do remove_source_rule "$name"; done
+    ip -4 route flush table 101 >/dev/null 2>&1 || true
+    ip -4 route flush table 102 >/dev/null 2>&1 || true
 }
 
 case "${1:-all}" in
-    wan) cache_one wan 101 ;;
-    wan2) cache_one wan2 102 ;;
-    wan3) : ;; # netifd owns table 103 for the dynamic USB interface
+    wan|wan2|wan3) cache_one "$1" ;;
     all)
-        cache_one wan 101
-        cache_one wan2 102
+        cache_one wan
+        cache_one wan2
+        cache_one wan3
         ;;
+    remove|stop) remove_all ;;
     *) exit 2 ;;
 esac
