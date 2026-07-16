@@ -80,7 +80,7 @@ Each enabled candidate—including Wi-Fi WAN 1—must have:
 - a default route in its private table
 - a successful lightweight path probe
 
-When a calibration object is configured, the probe requests one byte over HTTPS and requires HTTP `206`. Without an object, availability mode can fall back to a gateway reachability check. A hard interface failure is immediate. The selected path receives the configured application-failure hysteresis, but a standby that fails its current probe is never eligible for promotion.
+Availability is always decided by route validation, source-bound gateway ICMP, and source-bound HTTPS health fallback. Calibration requests one byte over HTTPS for speed classification only and must not withdraw an otherwise reachable path. A hard interface failure is immediate. The selected path receives the configured application-failure hysteresis, but a standby that fails its current probe is never eligible for promotion.
 
 ### Speed classes
 

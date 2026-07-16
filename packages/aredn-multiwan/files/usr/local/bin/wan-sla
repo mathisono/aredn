@@ -194,31 +194,9 @@ probe_path()
     old_ifs="$IFS"; IFS='|'; set -- $values; IFS="$old_ifs"
     device="$1"; source="$2"; gateway="${3:-}"
 
-    if calibration_configured; then
-        url="$(uci_get calibration_url)"
-        set -- --silent --show-error --fail --proto '=https' --proto-redir '=https' --max-redirs 0 \
-            --connect-timeout 5 --max-time 12 --interface "$source" --header 'Accept-Encoding: identity' \
-            --range 0-0 --output /dev/null --write-out '%{http_code}|%{size_download}'
-        if [ "$name" = wan3 ] && [ "$(uci_get wan3_proxy_enable)" = 1 ]; then
-            proxy_host="$(uci_get wan3_proxy_host)"
-            proxy_port="$(uci_get wan3_proxy_port)"
-            proxy_user="$(uci_get wan3_proxy_username)"
-            proxy_pass="$(uci_get wan3_proxy_password)"
-            [ -n "$proxy_host" ] || proxy_host=192.168.49.1
-            [ -n "$proxy_port" ] || proxy_port=8000
-            valid_ipv4 "$proxy_host" || return 1
-            set -- "$@" --proxy "http://$proxy_host:$proxy_port" --noproxy ''
-            [ -n "$proxy_user" ] && set -- "$@" --proxy-user "$proxy_user:$proxy_pass"
-        else
-            set -- "$@" --proxy ''
-        fi
-        output="$(curl "$@" "$url" 2>/dev/null || true)"
-        [ "$output" = '206|1' ]
-        return
-    fi
-
-    # Availability mode can work before a calibration object is configured.
-    # Adaptive mode will not select a path until a fresh speed class exists.
+    # Calibration measures performance; it is not the Internet reachability
+    # gate. Availability always validates route and source-bound reachability.
+    # Adaptive mode still will not select a path until a fresh speed class exists.
     availability_probe "$name" "$device" "$source" "$gateway"
 }
 
@@ -272,19 +250,21 @@ evaluate_candidate()
     name="$1"; mode="$2"; min_score="$3"; result_ttl="$4"; calibration_interval="$5"; failure_limit="$6"
 
     if ! candidate_enabled "$name"; then
-        printf '%s|0|0|unknown|0|0||disabled|0\n' "$name"
+        printf '%s|0|0|unknown|0|0||disabled|0|disabled|standby|%s:0\n' "$name" "$(uci_get active)"
         return
     fi
     values="$(inspect_candidate "$name" 2>/dev/null || true)"
     if [ -z "$values" ]; then
         failure_count "$name" fail >/dev/null
-        printf '%s|0|0|down|0|0||interface_down|0\n' "$name"
+        role=standby; [ "$name" = "$(uci_get active)" ] && role=active
+        printf '%s|0|0|down|0|0||interface_down|0|interface_down|%s|%s:0\n' "$name" "$role" "$(uci_get active)"
         return
     fi
     old_ifs="$IFS"; IFS='|'; set -- $values; IFS="$old_ifs"
     device="$1"
 
     current_active="$(uci_get active)"
+    selection_role=
     probe_ok=0
     PROBE_REASON=probe_failed
     if probe_path "$name" "$values"; then
@@ -300,7 +280,7 @@ evaluate_candidate()
             # currently failing standby is never eligible for promotion.
             healthy=1; reason=probe_retry
         else
-            healthy=0; reason=standby_probe_failed
+            healthy=0; reason="$PROBE_REASON"; selection_role=standby
         fi
     fi
 
@@ -323,7 +303,13 @@ evaluate_candidate()
             score="$raw_score"
         fi
     fi
-    printf '%s|1|%s|%s|%s|%s|%s|%s|%s\n' "$name" "$healthy" "$bin" "$score" "$mbps" "$device" "$reason" "$age"
+    persisted_active="$(uci_get active)"
+    route_active=0
+    ip -4 route show table 26 default 2>/dev/null | grep -q '^default' && route_active=1
+    [ -n "${selection_role:-}" ] || { [ "$name" = "$persisted_active" ] && selection_role=active || selection_role=standby; }
+    printf '%s|1|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+        "$name" "$healthy" "$bin" "$score" "$mbps" "$device" "$reason" "$age" \
+        "$reason" "$selection_role" "$persisted_active:$route_active"
 }
 
 read_active_line()
@@ -336,9 +322,9 @@ choose_candidate()
 {
     preferred="$1"
     best=''; best_score=-1
-    while IFS='|' read -r name configured healthy bin score mbps device reason age; do
-        [ "$configured" = 1 ] || continue
-        [ "$healthy" = 1 ] || continue
+        while IFS='|' read -r name configured healthy bin score mbps device reason age probe_reason selection_role active_route; do
+            [ "$configured" = 1 ] || continue
+            [ "$healthy" = 1 ] || continue
         [ "$score" -gt 0 ] || continue
         if [ "$score" -gt "$best_score" ] || { [ "$score" -eq "$best_score" ] && [ "$name" = "$preferred" ]; }; then
             best="$name"; best_score="$score"
@@ -392,12 +378,15 @@ write_status()
             "$(json_escape "$mode")" "$(json_escape "$active")" "$(json_escape "$selected_bin")" "$(json_escape "$WAN1_TRANSPORT")" "$(json_escape "$message")" \
             "$table28" "$table22" "$mesh_to_wan" "$lan_to_mesh" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         first=1
-        while IFS='|' read -r name configured healthy bin score mbps device reason age; do
+        while IFS='|' read -r name configured healthy bin score mbps device reason age probe_reason selection_role active_route; do
             [ "$first" = 1 ] || printf ','
             first=0
-            printf '{"name":"%s","configured":%s,"healthy":%s,"bin":"%s","score":%s,"mbps":%s,"device":"%s","reason":"%s","result_age":%s}' \
+            persisted_active="${active_route%:*}"; route_active="${active_route##*:}"
+            [ "$route_active" = 1 ] || route_active=0
+            printf '{"name":"%s","configured":%s,"healthy":%s,"bin":"%s","score":%s,"mbps":%s,"device":"%s","reason":"%s","probe_reason":"%s","selection_role":"%s","persisted_active":"%s","route_active":%s,"result_age":%s}' \
                 "$(json_escape "$name")" "$configured" "$healthy" "$(json_escape "$bin")" "$score" "$mbps" \
-                "$(json_escape "$device")" "$(json_escape "$reason")" "$age"
+                "$(json_escape "$device")" "$(json_escape "$reason")" "$(json_escape "${probe_reason:-$reason}")" \
+                "$(json_escape "${selection_role:-standby}")" "$(json_escape "$persisted_active")" "$route_active" "$age"
         done < "$CANDIDATE_FILE"
         printf ']}\n'
     } > "$tmp" && mv "$tmp" "$STATUS_FILE"

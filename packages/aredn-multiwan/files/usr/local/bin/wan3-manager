@@ -769,7 +769,7 @@ apply()
     if [ "$mode" = manual ]; then
         # Route immediately for local management, but do not publish table 28
         # until the SLA evaluator confirms current health and a fresh bin.
-        if ! select_wan "$active" 0 unknown 0; then
+        if ! select_wan "$active" 1 unknown 0; then
             withdraw_local "Manual selection is unavailable" 1
         fi
     fi
