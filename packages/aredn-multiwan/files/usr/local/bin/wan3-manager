@@ -117,6 +117,50 @@ is_usb_netdev()
     return 1
 }
 
+module_available()
+{
+    module="$1"
+    modinfo "$module" >/dev/null 2>&1 && return 0
+    [ -d "/sys/module/$module" ] && return 0
+    return 1
+}
+
+module_status()
+{
+    module="$1"
+    if [ -d "/sys/module/$module" ]; then
+        printf 'built-in\n'
+    elif modinfo "$module" >/dev/null 2>&1; then
+        printf 'loadable\n'
+    else
+        printf 'unavailable\n'
+    fi
+}
+
+usb_support_report()
+{
+    device="$(detect_device 2>/dev/null || true)"
+    reason="WAN3 unavailable: no compatible existing kernel USB-network support"
+    available=0
+    [ -n "$device" ] && { available=1; reason="USB network device present"; }
+    printf 'usbnet=%s\n' "$(module_status usbnet)"
+    printf 'cdc_ether=%s\n' "$(module_status cdc_ether)"
+    printf 'cdc_ncm=%s\n' "$(module_status cdc_ncm)"
+    printf 'rndis_host=%s\n' "$(module_status rndis_host)"
+    printf 'network_device=%s\n' "${device:-none}"
+    printf 'available=%s\n' "$available"
+    printf 'reason=%s\n' "$reason"
+}
+
+load_existing_usb_modules()
+{
+    for module in usbnet cdc_ether cdc_ncm rndis_host; do
+        module_available "$module" || continue
+        [ -d "/sys/module/$module" ] && continue
+        modprobe "$module" >/dev/null 2>&1 || true
+    done
+}
+
 detect_device()
 {
     configured="$(uci_get wan3_device)"
@@ -689,7 +733,16 @@ disable_package()
 apply_usb()
 {
     if [ "$(uci_get enabled)" != 1 ] || [ "$(uci_get wan3_enable)" != 1 ]; then remove_dynamic; return 0; fi
-    device="$(detect_device)" || { remove_dynamic; return 0; }
+    device="$(detect_device 2>/dev/null || true)"
+    if [ -z "$device" ]; then
+        load_existing_usb_modules
+        device="$(detect_device 2>/dev/null || true)"
+    fi
+    if [ -z "$device" ]; then
+        remove_dynamic
+        write_state degraded wan3 "" unknown 0 "WAN3 unavailable: no compatible existing kernel USB-network support"
+        return 0
+    fi
     add_dynamic "$device"
 }
 
@@ -754,7 +807,7 @@ status()
 }
 
 COMMAND="${1:-apply}"
-if [ "$COMMAND" != status ] && [ "$COMMAND" != inspect ]; then
+if [ "$COMMAND" != status ] && [ "$COMMAND" != inspect ] && [ "$COMMAND" != usb-support ]; then
     if ! acquire_manager_lock; then log "Another WAN manager operation is running"; exit 3; fi
     trap 'rm -rf "$MANAGER_LOCK"' EXIT HUP INT TERM
 fi
@@ -777,6 +830,7 @@ case "$COMMAND" in
         ;;
     proxy-stop) stop_proxy ;;
     inspect) [ $# -eq 2 ] || exit 2; interface_values "$2" ;;
+    usb-support) usb_support_report ;;
     status) status ;;
-    *) echo "usage: $0 {apply|usb-apply|select WAN [PERSIST BIN HEALTHY]|withdraw [REASON]|restore|disable|route-event IFACE ACTION|proxy-start|proxy-stop|inspect WAN|status}" >&2; exit 2 ;;
+    *) echo "usage: $0 {apply|usb-apply|select WAN [PERSIST BIN HEALTHY]|withdraw [REASON]|restore|disable|route-event IFACE ACTION|proxy-start|proxy-stop|inspect WAN|usb-support|status}" >&2; exit 2 ;;
 esac

@@ -6,7 +6,7 @@ PollyWAN is an experimental installable package for the MikroTik hAP ac lite, hA
 
 - `wan` — WAN 1. When an AREDN radio is in client/WAN mode, the existing logical interface `wan` uses `wlan0` or `wlan1`. Otherwise WAN 1 uses administrator-selected hAP Ethernet port(s).
 - `wan2` — WAN 2 on administrator-selected Ethernet port(s).
-- `wan3` — WAN 3 fixed to a phone USB RNDIS/CDC tether, with optional hAP-side PdaNet HTTP CONNECT settings.
+- `wan3` — WAN 3 fixed to a phone USB RNDIS/CDC tether when existing kernel USB-network support is available, with optional hAP-side PdaNet HTTP CONNECT settings.
 - Remote Mesh WAN remains the Babel-learned default in table 22 and is never treated as a fourth local candidate.
 
 Wi-Fi WAN and Ethernet WAN 1 are mutually exclusive because AREDN gives both the same logical interface name, `wan`. PollyWAN never changes a radio mode; it observes AREDN's existing configuration and prevents an Ethernet WAN-1 assignment while Wi-Fi owns `wan`.
@@ -27,7 +27,7 @@ Tunnel ingress is hard-blocked from local and remote Internet defaults while Pol
 
 The UI follows AREDN's advanced Ports layout. Each Ethernet port receives one untagged role—LAN, WAN 1, WAN 2, or disabled—and may carry tagged DtD VLAN 2. Port application is opt-in and protected by a timed rollback. WAN 1 is not offered as an Ethernet role while AREDN Wi-Fi client mode owns it.
 
-PdaNet is expected over a data-capable USB cable into the hAP USB host. The hAP obtains `wan3` DHCP on an RNDIS/CDC interface and uses the proxy address, port, and optional credentials entered by the administrator.
+PdaNet is expected over a data-capable USB cable into the hAP USB host. The hAP obtains `wan3` DHCP on an existing RNDIS/CDC kernel network interface and uses the proxy address, port, and optional credentials entered by the administrator. PollyWAN does not install or replace USB kernel modules; unsupported kernels leave WAN 3 down without route or firewall changes.
 
 A disabled installation does not remap ports, change radio modes, scan USB, open serial GPS devices, edit gpsd, change AREDN GPS time/location settings, or change USB power. WAN 3 scans only `/sys/class/net` after explicit enablement; `/dev/ttyACM0` and `/dev/ttyUSB0` remain owned by AREDN/gpsd.
 

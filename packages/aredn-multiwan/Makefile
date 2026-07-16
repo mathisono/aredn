@@ -16,8 +16,7 @@ define Package/aredn-multiwan
   URL:=https://github.com/mathisono/AREDN_PollyWAN
   DEPENDS:=@(TARGET_ath79_mikrotik||TARGET_ipq40xx_mikrotik) \
     +ca-bundle +curl +ip-tiny +jshn +jsonfilter +nftables-json +redsocks \
-    +kmod-nft-nat +kmod-usb-net-rndis +kmod-usb-net-cdc-ether \
-    +kmod-usb-net-cdc-ncm +TARGET_ath79:kmod-usb2 +TARGET_ath79:swconfig
+    +kmod-nft-nat +TARGET_ath79:kmod-usb2 +TARGET_ath79:swconfig
 endef
 
 define Package/aredn-multiwan/description

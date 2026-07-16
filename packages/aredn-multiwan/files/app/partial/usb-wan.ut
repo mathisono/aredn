@@ -3,11 +3,13 @@ let iface = null;
 try { iface = ubus.call("network.interface.wan3", "status"); } catch (_) {}
 const addresses = (iface && iface["ipv4-address"]) || [];
 const enabled = uciMesh.get("aredn", "multiwan", "wan3_enable") === "1";
+const device = iface?.l3_device || iface?.device || "";
 %}
 <div id="usb-wan" class="ctrl" hx-get="status/e/usb-wan" hx-target="#ctrl-modal">
     <div class="section-title">WAN 3 · phone USB tether</div>
     <div class="section cols">
         <div><div class="t">{{enabled ? iface?.up ? "up" : "waiting" : "disabled"}}</div><div class="s">RNDIS / CDC input</div></div>
+        <div><div class="t">{{device || "none"}}</div><div class="s">existing USB netdev</div></div>
         <div><div class="t">{{length(addresses) ? addresses[0].address : "-"}}</div><div class="s">wan3 IPv4</div></div>
         <div><div class="t">{{fs.access("/var/run/wan3-redsocks.pid") ? "running" : "off"}}</div><div class="s">PdaNet proxy</div></div>
         <div><div class="t">unchanged</div><div class="s">serial GPS ownership</div></div>

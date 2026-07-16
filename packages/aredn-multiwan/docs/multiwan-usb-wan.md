@@ -17,6 +17,7 @@ wan3 DHCP (private table 103)
 ```
 
 The phone must expose a USB network interface and DHCP path. A proxy address alone is insufficient when the hAP has no USB network device/address.
+PollyWAN uses USB-network drivers already present in the running kernel. It does not install or replace kernel modules; when existing RNDIS/CDC support is unavailable, WAN 3 remains down and no dynamic interface, route, or firewall state is created.
 
 ## Standard routed tether
 
@@ -31,7 +32,7 @@ The phone must expose a USB network interface and DHCP path. A proxy address alo
 ## PdaNet
 
 1. Enable **Activate USB Mode** in PdaNet and leave it running.
-2. Confirm the hAP sees an RNDIS/CDC interface and `wan3` receives DHCP.
+2. Confirm the hAP sees an existing RNDIS/CDC network interface and `wan3` receives DHCP.
 3. Enable **Use PdaNet HTTP CONNECT proxy**.
 4. Enter the values displayed by PdaNet. Common defaults are:
 
@@ -86,4 +87,4 @@ curl --interface "$source_ip" --proxy http://192.168.49.1:8000 \
 
 ## GPS coexistence
 
-With WAN 3 disabled, PollyWAN never enumerates or opens serial GPS devices. Installing USB network kernel modules does not change AREDN's GPS configuration. See [port-roles-and-gps.md](port-roles-and-gps.md) for the required before/after checks.
+With WAN 3 disabled, PollyWAN never enumerates or opens serial GPS devices and does not scan USB networking. Existing USB network kernel support does not change AREDN's GPS configuration. See [port-roles-and-gps.md](port-roles-and-gps.md) for the required before/after checks.
