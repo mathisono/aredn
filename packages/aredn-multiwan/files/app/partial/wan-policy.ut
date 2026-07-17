@@ -68,7 +68,7 @@ const wan2Enabled = uciMesh.get("aredn", "multiwan", "wan2_enable") === "1";
         <div class="pw-label">Publication</div><div class="pw-value">Never copied to table 28</div>
     </div>
 </section>
-<section id="wan-policy" class="ctrl pw-card pw-card-wide pw-card-clickable" hx-get="status/e/wan-policy" hx-target="#ctrl-modal" tabindex="0" aria-labelledby="pw-policy-title">
+<section id="wan-policy" class="ctrl pw-card pw-card-wide pw-card-clickable" hx-get="status/e/wan-policy" hx-target="#ctrl-modal" hx-swap="innerHTML" tabindex="0" aria-labelledby="pw-policy-title">
     <div class="pw-card-head"><h2 id="pw-policy-title">Route Policy</h2><span class="pw-configure">Configure</span></div>
     <div class="pw-meta-grid">
         <div class="pw-label">Selection mode</div><div class="pw-value">{{enabled ? uciMesh.get("aredn", "multiwan", "selection_mode") || "manual" : "Disabled"}}</div>

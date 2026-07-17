@@ -3,7 +3,7 @@ function readResult(name) { const v = fs.readfile(`/tmp/wan-calibration/${name}.
 const host = uciMesh.get("aredn", "multiwan", "calibration_host") || "";
 const names = [ { name: "wan", label: "WAN 1" }, { name: "wan2", label: "WAN 2" }, { name: "wan3", label: "WAN 3 USB" } ];
 %}
-<section id="link-calibration" class="ctrl pw-card pw-card-wide pw-card-clickable" hx-get="status/e/link-calibration" hx-target="#ctrl-modal" tabindex="0" aria-labelledby="pw-cal-title">
+<section id="link-calibration" class="ctrl pw-card pw-card-wide pw-card-clickable" hx-get="status/e/link-calibration" hx-target="#ctrl-modal" hx-swap="innerHTML" tabindex="0" aria-labelledby="pw-cal-title">
     <div class="pw-card-head"><h2 id="pw-cal-title">Link Calibration</h2><span class="pw-configure">Configure</span></div>
     <div class="pw-muted">{{host || "No HTTPS calibration object configured"}}</div>
     <div class="pw-cal-grid">

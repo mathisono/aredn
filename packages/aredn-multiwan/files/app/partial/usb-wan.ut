@@ -7,7 +7,7 @@ const device = iface && (iface.l3_device || iface.device) || "";
 const stateText = enabled ? iface && iface.up ? "Healthy" : "Unavailable" : "Disabled";
 const stateClass = enabled ? iface && iface.up ? "pw-status-ok" : "pw-status-warn" : "pw-status-off";
 %}
-<section id="usb-wan" class="ctrl pw-card pw-card-main pw-card-clickable {{stateClass}}" hx-get="status/e/usb-wan" hx-target="#ctrl-modal" tabindex="0" aria-labelledby="pw-wan3-title">
+<section id="usb-wan" class="ctrl pw-card pw-card-main pw-card-clickable {{stateClass}}" hx-get="status/e/usb-wan" hx-target="#ctrl-modal" hx-swap="innerHTML" tabindex="0" aria-labelledby="pw-wan3-title">
     <div class="pw-card-head"><h2 id="pw-wan3-title">WAN 3 USB</h2><span class="pw-configure">Configure</span></div>
     <div class="pw-badge"><span class="pw-status-dot"></span>{{stateText}}</div>
     {% if (!enabled) { %}
