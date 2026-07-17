@@ -1,5 +1,5 @@
 #!/bin/sh
-# Static and disposable-mock verification for the standalone PollyWAN r12 source.
+# Static and disposable-mock verification for the standalone PollyWAN r13 source.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
@@ -78,7 +78,7 @@ done
 # Package metadata and optional-only target contract.
 require_text Makefile 'PKG_NAME:=aredn-multiwan'
 require_text Makefile 'PKG_VERSION:=0.1.0'
-require_text Makefile 'PKG_RELEASE:=12'
+require_text Makefile 'PKG_RELEASE:=13'
 require_text Makefile 'URL:=https://github.com/mathisono/AREDN_PollyWAN'
 require_text Makefile '+ip-tiny'
 require_text Makefile '+redsocks'
@@ -345,7 +345,7 @@ PY
 
 require_text "$SLA" 'manual selection recovered: $active'
 require_text "$SLA" '[ "$active" = none ] || [ "$active" = mesh ]'
-require_text files/usr/local/bin/wan3-manager '$1 ~ /^[0-9.]+'
-require_text files/usr/local/bin/wan-route-cache '$1 ~ /^[0-9.]+'
+require_text files/usr/local/bin/wan3-manager 'index($1, "/")'
+require_text files/usr/local/bin/wan-route-cache 'index($1, "/")'
 
-echo 'PollyWAN r12 static and mock verification passed'
+echo 'PollyWAN r13 static and mock verification passed'
