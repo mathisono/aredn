@@ -243,8 +243,8 @@ interface_values()
         [ "$target" = 0.0.0.0 ] || return 1
     fi
 
-    network="$(ip -4 route show table all dev "$device" scope link 2>/dev/null | awk -v source="$source" '$1 != "default" && $0 ~ ("src " source) { print $1; exit }')"
-    [ -n "$network" ] || network="$(ip -4 route show table all dev "$device" scope link 2>/dev/null | awk '$1 != "default" { print $1; exit }')"
+    network="$(ip -4 route show table all dev "$device" scope link 2>/dev/null | awk -v source="$source" '$1 ~ /^[0-9.]+\\/[0-9]+$/ && $0 ~ ("src " source) { print $1; exit }')"
+    [ -n "$network" ] || network="$(ip -4 route show table all dev "$device" scope link 2>/dev/null | awk '$1 ~ /^[0-9.]+\\/[0-9]+$/ { print $1; exit }')"
     case "$network" in *.*/*) ;; *) return 1 ;; esac
     printf '%s|%s|%s|%s\n' "$device" "$source" "$gateway" "$network"
 }
