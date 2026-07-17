@@ -106,10 +106,10 @@ const active = uciMesh.get("aredn", "multiwan", "active") || "wan";
 const status = readJson("/tmp/wan-sla/status.json");
 const candidates = status?.candidates || [];
 %}
-<div class="dialog">
+<div class="dialog pollywan-dialog">
     {{_R("dialog-header", "PollyWAN selection policy")}}
     <div>
-        {% if (error) { %}<div><b>{{error}}</b></div><hr>{% } else if (message) { %}<div>{{message}}</div><hr>{% } %}
+        {% if (error) { %}<div class="pw-notice pw-notice-error"><b>{{error}}</b></div>{% } else if (message) { %}<div class="pw-notice pw-notice-ok">{{message}}</div>{% } %}
         <div class="cols"><div><div class="o">Runtime decision</div><div class="m">{{status?.message || "No SLA status is available"}}</div></div><div style="flex:0;text-align:right"><div>{{status?.active || active}}</div><div class="m">{{status?.selected_bin || "unknown"}}</div></div></div>
         <div class="cols"><div><div class="o">WAN 1 transport</div><div class="m">AREDN Wi-Fi client mode still uses logical interface wan and private table 101</div></div><div style="flex:0;text-align:right"><div>{{wifiWan.label}}</div><div class="m">{{wifiWan.active ? wifiWan.device : "br-wan"}}</div></div></div>
         <form id="wan-policy-form">
@@ -129,8 +129,8 @@ const candidates = status?.candidates || [];
             <div class="cols"><div><div class="o">Result lifetime / automatic calibration</div><div class="m">Seconds before a bin is stale and minimum interval between adaptive calibrations</div></div><div style="flex:0;white-space:nowrap"><input name="result_ttl" type="number" min="300" max="86400" size="7" value="{{uciMesh.get("aredn", "multiwan", "result_ttl") || 28800}}"> / <input name="calibration_interval" type="number" min="300" max="86400" size="7" value="{{uciMesh.get("aredn", "multiwan", "calibration_interval") || 21600}}"></div></div>
         </form>
         {{_H("PollyWAN owns only local candidates wan, wan2, and wan3. The wan candidate is AREDN Wi-Fi client mode on wlan0/wlan1 when configured, otherwise Ethernet br-wan. A remote Mesh WAN remains an AREDN/Babel table-22 fallback and is never copied into table 28. Tunnel ingress is always blocked from local and remote Internet defaults while PollyWAN is enabled; that guard is deliberately not a user toggle.")}}
-        {% if (length(candidates)) { %}<hr><div class="cols">{% for (let i = 0; i < length(candidates); i++) { const c = candidates[i]; %}<div><div class="t">{{c.name}}: {{c.bin}} {{c.mbps ? sprintf("%.1f Mbps", c.mbps) : ""}}</div><div class="s">{{c.healthy ? "healthy" : "ineligible"}} · {{c.reason}}</div></div>{% } %}</div>{% } %}
-        <div class="cols"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#wan-policy-form" hx-vals='{"action":"save"}'>Save policy</button><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"evaluate"}'>Evaluate now</button><div style="flex:1"></div><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"mesh-fallback"}'>Use remote Mesh WAN</button></div>
+        {% if (length(candidates)) { %}<hr><div class="cols">{% for (let i = 0; i < length(candidates); i++) { const c = candidates[i]; %}<div><div class="t">{{c.name}}: {{c.bin}} {{c.mbps ? sprintf("%.1f Mbps", c.mbps) : ""}}</div><div class="s">{{c.healthy ? "healthy" : "ineligible"}} &middot; {{c.reason}}</div></div>{% } %}</div>{% } %}
+        <div class="pw-actions"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#wan-policy-form" hx-vals='{"action":"save"}'>Save policy</button><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"evaluate"}'>Evaluate now</button><div class="pw-spacer"></div><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"mesh-fallback"}'>Use remote Mesh WAN</button></div>
     </div>
     {{_R("dialog-footer", "nocancel")}}
     <script>(function(){ {{_R("open")}} htmx.on("#dialog-done", "click", _ => htmx.ajax("GET", "/a/u-wan-policy", { target: "#wan-policy", swap: "outerHTML" })); })();</script>

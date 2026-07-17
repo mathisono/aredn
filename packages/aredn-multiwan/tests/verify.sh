@@ -1,5 +1,5 @@
 #!/bin/sh
-# Static and disposable-mock verification for the standalone PollyWAN r16 source.
+# Static and disposable-mock verification for the standalone PollyWAN r17 source.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
@@ -53,6 +53,7 @@ files/app/main/status/e/ethernet-ports.ut
 files/app/main/status/e/usb-wan.ut
 files/app/main/status/e/link-calibration.ut
 files/app/partial/multiwan-page.ut
+files/app/partial/multiwan-style.ut
 files/app/partial/wan-policy.ut
 files/app/partial/ethernet-ports.ut
 files/app/partial/usb-wan.ut
@@ -78,7 +79,7 @@ done
 # Package metadata and optional-only target contract.
 require_text Makefile 'PKG_NAME:=aredn-multiwan'
 require_text Makefile 'PKG_VERSION:=0.1.0'
-require_text Makefile 'PKG_RELEASE:=16'
+require_text Makefile 'PKG_RELEASE:=17'
 require_text Makefile 'URL:=https://github.com/mathisono/AREDN_PollyWAN'
 require_text Makefile '+ip-tiny'
 require_text Makefile '+redsocks'
@@ -93,6 +94,7 @@ require_text Makefile 'WAN 1 as either administrator-selected hAP Ethernet or th
 require_text Makefile 'existing AREDN Wi-Fi client logical interface'
 require_text Makefile 'Installation is disabled and inert'
 require_text Makefile 'Package/aredn-multiwan/prerm'
+require_text Makefile 'files/app/partial/multiwan-style.ut'
 require_text LICENSE 'GNU General Public License'
 require_text AREDNLicense.txt 'not represented as an official'
 
@@ -266,7 +268,7 @@ require_text files/app/main/status/e/ethernet-ports.ut 'Wi-Fi client on wlan1'
 require_text files/app/main/status/e/ethernet-ports.ut 'no Ethernet port may also be assigned to WAN 1'
 require_text files/app/main/status/e/ethernet-ports.ut 'WAN 3 remains fixed to USB'
 require_text files/app/main/status/e/ethernet-ports.ut 'never edits gpsd'
-require_text files/app/main/status/e/usb-wan.ut 'Android phone → data USB cable → hAP USB host'
+require_text files/app/main/status/e/usb-wan.ut 'Android phone &rarr; data USB cable &rarr; hAP USB host'
 require_text files/app/main/status/e/usb-wan.ut 'Existing kernel support'
 require_text files/app/main/status/e/usb-wan.ut 'PollyWAN does not replace kernel modules'
 require_text files/app/main/status/e/usb-wan.ut 'Proxy IPv4 address'
@@ -331,6 +333,7 @@ python3 - <<'PY'
 from html.parser import HTMLParser
 from pathlib import Path
 from xml.etree import ElementTree
+import re
 
 root = Path('.')
 ElementTree.parse(root / 'files/www/apps/aredn-multiwan/icon.svg')
@@ -340,9 +343,45 @@ class Parser(HTMLParser):
 
 Parser().feed((root / 'files/www/apps/aredn-multiwan/help.html').read_text())
 for path in (root / 'files/app').rglob('*.ut'):
-    source = path.read_text()
+    raw = path.read_bytes()
+    if raw.startswith(b'\xef\xbb\xbf'):
+        raise SystemExit(f'UTF-8 BOM present: {path}')
+    source = raw.decode('utf-8')
+    if re.search('[\u00c3\u00c2\ufffd]', source):
+        raise SystemExit(f'mojibake marker present: {path}')
     if source.count('{%') != source.count('%}'):
         raise SystemExit(f'unbalanced ucode template markers: {path}')
+for path in (root / 'files/www').rglob('*'):
+    if path.is_file():
+        raw = path.read_bytes()
+        if raw.startswith(b'\xef\xbb\xbf'):
+            raise SystemExit(f'UTF-8 BOM present: {path}')
+        source = raw.decode('utf-8')
+        if re.search('[\u00c3\u00c2\ufffd]', source):
+            raise SystemExit(f'mojibake marker present: {path}')
+style = (root / 'files/app/partial/multiwan-style.ut').read_text()
+if style.count('id="pollywan-style"') != 1:
+    raise SystemExit('style partial must contain one #pollywan-style')
+if 'id="pollywan-style"' in (root / 'files/app/main/u-multiwan.ut').read_text():
+    raise SystemExit('u-multiwan must not render #pollywan-style directly')
+page = (root / 'files/app/partial/multiwan-page.ut').read_text()
+for required in ['id="multiwan-page"', 'wan-card-1', 'wan-card-2', 'usb-wan', 'mesh-card', 'Table 22', 'Table 26', 'Table 27', 'Table 28']:
+    if required not in page and required not in (root / 'files/app/partial/wan-policy.ut').read_text():
+        raise SystemExit(f'missing dashboard marker: {required}')
+for port in range(1, 6):
+    if f'P{port}' not in (root / 'files/app/partial/ethernet-ports.ut').read_text():
+        raise SystemExit(f'missing port tile marker: P{port}')
+for cls in ['pw-status-ok', 'pw-status-warn', 'pw-status-bad', 'pw-status-off', 'pw-status-unknown', 'pw-status-active']:
+    if cls not in ''.join(p.read_text() for p in (root / 'files/app').rglob('*.ut')):
+        raise SystemExit(f'missing status class: {cls}')
+for line in style.splitlines():
+    stripped = line.strip()
+    if not stripped or stripped.startswith(('<style', '</style>', '@media', '#multiwan-page', '.pollywan-dialog')):
+        continue
+    if '{' in stripped and not stripped.startswith('@'):
+        raise SystemExit('PollyWAN CSS contains an unscoped selector')
+if '/etc/init.d/aredn-multiwan' in ''.join(p.read_text(errors='ignore') for p in root.rglob('*') if p.is_file() and '.git' not in p.parts and str(p) != 'tests/verify.sh'):
+    raise SystemExit('obsolete /etc/init.d/aredn-multiwan reference remains')
 print('markup/template balance passed')
 PY
 
@@ -354,4 +393,4 @@ require_text files/usr/local/bin/wan3-manager 'function cidr_prefix'
 require_text files/usr/local/bin/wan-route-cache 'function cidr_prefix'
 require_text files/usr/local/bin/wan-route-cache 'connected_prefix_from_cidr "$cidr"'
 
-echo 'PollyWAN r16 static and mock verification passed'
+echo 'PollyWAN r17 static and mock verification passed'

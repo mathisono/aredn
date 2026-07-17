@@ -13,19 +13,33 @@ const s = readPortState();
 const wifiWan = wifiWanInfo();
 let wan1 = [];
 let wan2 = [];
+let tiles = [];
 for (let i = 1; i <= 5; i++) {
     const role = uciMesh.get("aredn", "multiwan", `port${i}_role`) || (i === 1 ? "wan" : i < 5 ? "lan" : "off");
+    const dtd = uciMesh.get("aredn", "multiwan", `port${i}_dtd`) === "1";
+    push(tiles, { index: i, label: `P${i}`, device: `port${i}`, role: role, dtd: dtd });
     if (!wifiWan.active && role === "wan") push(wan1, `P${i}`);
     else if (role === "wan2") push(wan2, `P${i}`);
 }
+const tx = s?.pending_token ? "pending confirmation" : s?.applied ? "ready" : uciMesh.get("aredn", "multiwan", "port_roles_enabled") === "1" ? "ready" : "inactive";
 %}
-<div id="ethernet-ports" class="ctrl" hx-get="status/e/ethernet-ports" hx-target="#ctrl-modal">
-    <div class="section-title">hAP Ethernet roles</div>
-    <div class="section cols">
-        <div><div class="t">{{uciMesh.get("aredn", "multiwan", "port_roles_enabled") === "1" ? s?.pending_token ? "pending" : "enabled" : "AREDN defaults"}}</div><div class="s">role management</div></div>
-        <div><div class="t">{{wifiWan.label}}</div><div class="s">WAN 1 transport</div></div>
-        <div><div class="t">{{wifiWan.active ? "not Ethernet" : length(wan1) ? join(", ", wan1) : "none"}}</div><div class="s">WAN 1 ports</div></div>
-        <div><div class="t">{{length(wan2) ? join(", ", wan2) : "none"}}</div><div class="s">WAN 2 ports</div></div>
-        <div><div class="t">USB</div><div class="s">WAN 3 fixed</div></div>
+<section id="ethernet-ports" class="ctrl pw-card pw-card-wide pw-card-clickable" hx-get="status/e/ethernet-ports" hx-target="#ctrl-modal" tabindex="0" aria-labelledby="pw-ports-title">
+    <div class="pw-card-head"><h2 id="pw-ports-title">Ethernet Port Roles</h2><span class="pw-configure">Configure</span></div>
+    <div class="pw-badges">
+        <span class="pw-badge">{{tx}}</span>
+        <span class="pw-badge">WAN 1: {{wifiWan.active ? wifiWan.label : length(wan1) ? join(", ", wan1) : "none"}}</span>
+        <span class="pw-badge">WAN 2: {{length(wan2) ? join(", ", wan2) : "none"}}</span>
     </div>
-</div>
+    <!-- Port tiles: P1 P2 P3 P4 P5 -->
+    <div class="pw-port-grid">
+        {% for (let i = 0; i < length(tiles); i++) { const p = tiles[i]; %}
+        <div class="pw-tile pw-port-role-{{p.role}}">
+            <div class="pw-port-label">{{p.label}}</div>
+            <div>{{p.role === "wan" ? "WAN 1" : p.role === "wan2" ? "WAN 2" : p.role === "lan" ? "LAN" : "Off"}}</div>
+            <div class="pw-muted">{{p.device}}</div>
+            <div class="pw-muted">Carrier unknown</div>
+            <div class="pw-muted">DtD {{p.dtd ? "tagged" : "off"}}</div>
+        </div>
+        {% } %}
+    </div>
+</section>

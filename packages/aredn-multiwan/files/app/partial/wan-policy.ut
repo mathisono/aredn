@@ -9,17 +9,78 @@ function wan1Transport()
     if (radio1 === "wan") return "Wi-Fi wlan1";
     return "Ethernet";
 }
+function ifaceState(name)
+{
+    try {
+        const state = ubus.call(`network.interface.${name}`, "status");
+        const addresses = (state && state["ipv4-address"]) || [];
+        return { up: state?.up === true, device: state?.l3_device || state?.device || "", address: length(addresses) ? addresses[0].address : "", gateway: state?.route && length(state.route) ? state.route[0].nexthop || "" : "" };
+    } catch (_) { return { up: false, device: "", address: "", gateway: "" }; }
+}
+function candidate(name) { const list = s?.candidates || []; for (let i = 0; i < length(list); i++) if (list[i].name === name) return list[i]; return null; }
+function healthClass(c, enabled) { if (!enabled) return "pw-status-off"; if (!c) return "pw-status-unknown"; return c.healthy ? "pw-status-ok" : "pw-status-bad"; }
+function healthText(c, enabled) { if (!enabled) return "Disabled"; if (!c) return "Unknown"; return c.healthy ? "Healthy" : "Down"; }
+function labelPath(value) { return value === "wan" ? "WAN 1" : value === "wan2" ? "WAN 2" : value === "wan3" ? "WAN 3 USB" : value === "mesh" ? "Remote Mesh WAN" : "Unknown"; }
 const s = readPolicyStatus();
 const enabled = uciMesh.get("aredn", "multiwan", "enabled") === "1";
 const active = s?.active || uciMesh.get("aredn", "multiwan", "active") || "wan";
+const wan1 = ifaceState("wan");
+const wan2 = ifaceState("wan2");
+const c1 = candidate("wan");
+const c2 = candidate("wan2");
+const c3 = candidate("wan3");
+const wan1Enabled = uciMesh.get("aredn", "multiwan", "wan_enable") !== "0";
+const wan2Enabled = uciMesh.get("aredn", "multiwan", "wan2_enable") === "1";
 %}
-<div id="wan-policy" class="ctrl" hx-get="status/e/wan-policy" hx-target="#ctrl-modal">
-    <div class="section-title">WAN selection and Mesh WAN policy</div>
-    <div class="section cols">
-        <div><div class="t">{{enabled ? uciMesh.get("aredn", "multiwan", "selection_mode") || "manual" : "disabled"}}</div><div class="s">controller</div></div>
-        <div><div class="t">{{active}}</div><div class="s">selected path · {{s?.selected_bin || "unknown"}}</div></div>
-        <div><div class="t">{{wan1Transport()}}</div><div class="s">WAN 1 transport · table 101</div></div>
-        <div><div class="t">{{s?.table28_published ? "published" : "withdrawn"}}</div><div class="s">Babel table 28</div></div>
-        <div><div class="t">{{s?.remote_mesh_default ? "available" : "absent"}}</div><div class="s">remote table 22</div></div>
+<section id="wan-card-1" class="pw-card pw-card-main {{healthClass(c1, wan1Enabled)}} {{active === "wan" ? "pw-status-active" : ""}}" aria-labelledby="pw-wan1-title">
+    <div class="pw-card-head"><h2 id="pw-wan1-title">WAN 1</h2><span class="pw-badge"><span class="pw-status-dot"></span>{{active === "wan" ? "Active" : "Standby"}}</span></div>
+    <div class="pw-muted">{{wan1Transport()}}</div>
+    <div class="pw-meta-grid">
+        <div class="pw-label">State</div><div class="pw-value">{{healthText(c1, wan1Enabled)}}</div>
+        <div class="pw-label">Device</div><div class="pw-value">{{wan1.device || "br-wan"}}</div>
+        <div class="pw-label">IPv4</div><div class="pw-value">{{wan1.address || "Absent"}}</div>
+        <div class="pw-label">Gateway</div><div class="pw-value">{{wan1.gateway || "Unknown"}}</div>
+        <div class="pw-label">Health</div><div class="pw-value">{{c1?.reason || "Not evaluated"}}</div>
+        <div class="pw-label">Speed bin</div><div class="pw-value">{{c1?.bin || "Unknown"}}</div>
+        <div class="pw-label">Table</div><div class="pw-value">101 private</div>
     </div>
-</div>
+</section>
+<section id="wan-card-2" class="pw-card pw-card-main {{healthClass(c2, wan2Enabled)}} {{active === "wan2" ? "pw-status-active" : ""}}" aria-labelledby="pw-wan2-title">
+    <div class="pw-card-head"><h2 id="pw-wan2-title">WAN 2</h2><span class="pw-badge"><span class="pw-status-dot"></span>{{active === "wan2" ? "Active" : "Standby"}}</span></div>
+    <div class="pw-muted">Ethernet</div>
+    <div class="pw-meta-grid">
+        <div class="pw-label">State</div><div class="pw-value">{{healthText(c2, wan2Enabled)}}</div>
+        <div class="pw-label">Device</div><div class="pw-value">{{wan2.device || "br-wan2"}}</div>
+        <div class="pw-label">IPv4</div><div class="pw-value">{{wan2.address || "Absent"}}</div>
+        <div class="pw-label">Gateway</div><div class="pw-value">{{wan2.gateway || "Unknown"}}</div>
+        <div class="pw-label">Health</div><div class="pw-value">{{c2?.reason || "Not evaluated"}}</div>
+        <div class="pw-label">Speed bin</div><div class="pw-value">{{c2?.bin || "Unknown"}}</div>
+        <div class="pw-label">Table</div><div class="pw-value">102 private</div>
+    </div>
+</section>
+<section id="mesh-card" class="pw-card pw-card-main {{active === "mesh" ? "pw-status-active" : s?.remote_mesh_default ? "pw-status-ok" : "pw-status-off"}}" aria-labelledby="pw-mesh-title">
+    <div class="pw-card-head"><h2 id="pw-mesh-title">Remote Mesh WAN</h2><span class="pw-badge"><span class="pw-status-dot"></span>{{active === "mesh" ? "Active" : s?.remote_mesh_default ? "Available" : "Absent"}}</span></div>
+    <div class="pw-muted">Babel table 22 fallback</div>
+    <div class="pw-meta-grid">
+        <div class="pw-label">State</div><div class="pw-value">{{s?.remote_mesh_default ? "Available" : "Absent"}}</div>
+        <div class="pw-label">Selection</div><div class="pw-value">{{active === "mesh" ? "Selected" : "Standby"}}</div>
+        <div class="pw-label">Route table</div><div class="pw-value">22 remote default</div>
+        <div class="pw-label">Publication</div><div class="pw-value">Never copied to table 28</div>
+    </div>
+</section>
+<section id="wan-policy" class="ctrl pw-card pw-card-wide pw-card-clickable" hx-get="status/e/wan-policy" hx-target="#ctrl-modal" tabindex="0" aria-labelledby="pw-policy-title">
+    <div class="pw-card-head"><h2 id="pw-policy-title">Route Policy</h2><span class="pw-configure">Configure</span></div>
+    <div class="pw-meta-grid">
+        <div class="pw-label">Selection mode</div><div class="pw-value">{{enabled ? uciMesh.get("aredn", "multiwan", "selection_mode") || "manual" : "Disabled"}}</div>
+        <div class="pw-label">Preferred WAN</div><div class="pw-value">{{labelPath(uciMesh.get("aredn", "multiwan", "preferred_wan") || "wan")}}</div>
+        <div class="pw-label">Active path</div><div class="pw-value">{{labelPath(active)}} ({{s?.selected_bin || "unknown"}})</div>
+        <div class="pw-label">Tunnel guard</div><div class="pw-value">{{enabled ? "Enabled" : "Idle"}}</div>
+        <div class="pw-label">Mesh sharing</div><div class="pw-value">{{uciMesh.get("aredn", "@wan[0]", "mesh_to_local_wan") === "1" ? "Allowed when qualified" : "Not shared"}}</div>
+    </div>
+    <div class="pw-route-list" aria-label="Route tables">
+        <div class="pw-tile"><strong>Table 22</strong><div>{{s?.remote_mesh_default ? "Remote default available" : "No remote default"}}</div></div>
+        <div class="pw-tile"><strong>Table 26</strong><div>{{active !== "mesh" ? "Active local default" : "Withdrawn"}}</div></div>
+        <div class="pw-tile"><strong>Table 27</strong><div>{{active !== "mesh" ? "Active local subnet" : "Withdrawn"}}</div></div>
+        <div class="pw-tile"><strong>Table 28</strong><div>{{s?.table28_published ? "Published" : "Not published"}}</div></div>
+    </div>
+</section>

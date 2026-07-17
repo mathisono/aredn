@@ -4,14 +4,21 @@ try { iface = ubus.call("network.interface.wan3", "status"); } catch (_) {}
 const addresses = (iface && iface["ipv4-address"]) || [];
 const enabled = uciMesh.get("aredn", "multiwan", "wan3_enable") === "1";
 const device = iface?.l3_device || iface?.device || "";
+const stateText = enabled ? iface?.up ? "Healthy" : "Unavailable" : "Disabled";
+const stateClass = enabled ? iface?.up ? "pw-status-ok" : "pw-status-warn" : "pw-status-off";
 %}
-<div id="usb-wan" class="ctrl" hx-get="status/e/usb-wan" hx-target="#ctrl-modal">
-    <div class="section-title">WAN 3 · phone USB tether</div>
-    <div class="section cols">
-        <div><div class="t">{{enabled ? iface?.up ? "up" : "waiting" : "disabled"}}</div><div class="s">RNDIS / CDC input</div></div>
-        <div><div class="t">{{device || "none"}}</div><div class="s">existing USB netdev</div></div>
-        <div><div class="t">{{length(addresses) ? addresses[0].address : "-"}}</div><div class="s">wan3 IPv4</div></div>
-        <div><div class="t">{{fs.access("/var/run/wan3-redsocks.pid") ? "running" : "off"}}</div><div class="s">PdaNet proxy</div></div>
-        <div><div class="t">unchanged</div><div class="s">serial GPS ownership</div></div>
+<section id="usb-wan" class="ctrl pw-card pw-card-main pw-card-clickable {{stateClass}}" hx-get="status/e/usb-wan" hx-target="#ctrl-modal" tabindex="0" aria-labelledby="pw-wan3-title">
+    <div class="pw-card-head"><h2 id="pw-wan3-title">WAN 3 USB</h2><span class="pw-configure">Configure</span></div>
+    <div class="pw-badge"><span class="pw-status-dot"></span>{{stateText}}</div>
+    {% if (!enabled) { %}
+    <p class="pw-muted">WAN 3 is disabled. USB networking, PdaNet proxying, and route publication are idle.</p>
+    {% } %}
+    <div class="pw-wan3-grid">
+        <div class="pw-tile"><strong>Kernel support</strong><div>{{enabled ? "Existing modules only" : "Idle"}}</div></div>
+        <div class="pw-tile"><strong>USB netdev</strong><div>{{device || "Absent"}}</div></div>
+        <div class="pw-tile"><strong>IPv4</strong><div>{{length(addresses) ? addresses[0].address : "Absent"}}</div></div>
+        <div class="pw-tile"><strong>PdaNet proxy</strong><div>{{enabled && fs.access("/var/run/wan3-redsocks.pid") ? "Running" : "Off"}}</div></div>
+        <div class="pw-tile"><strong>GPS serial</strong><div>AREDN owned</div></div>
+        <div class="pw-tile"><strong>Table</strong><div>103 private</div></div>
     </div>
-</div>
+</section>

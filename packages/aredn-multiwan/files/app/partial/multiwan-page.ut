@@ -1,25 +1,44 @@
-<div id="multiwan-page" hx-get="u-multiwan" hx-trigger="every 10s [document.visibilityState === 'visible']" hx-swap="outerHTML">
-    <div class="noctrl">
-        <div class="section-title">PollyWAN</div>
-        <div class="section">
-            <div class="t">WAN 1 Ethernet/Wi-Fi · WAN 2 Ethernet · WAN 3 USB · Remote Mesh WAN fallback</div>
-            <div class="s">Adaptive local-WAN selection, qualified Babel export, PdaNet proxying, and hard tunnel Internet isolation</div>
+{%
+function readJson(path) { const v = fs.readfile(path); if (!v) return null; try { return json(v); } catch (_) { return null; } }
+function labelPath(value) { return value === "wan" ? "WAN 1" : value === "wan2" ? "WAN 2" : value === "wan3" ? "WAN 3 USB" : value === "mesh" ? "Remote Mesh WAN" : "Unknown"; }
+const status = readJson("/tmp/wan-sla/status.json");
+const enabled = uciMesh.get("aredn", "multiwan", "enabled") === "1";
+const mode = uciMesh.get("aredn", "multiwan", "selection_mode") || "manual";
+const active = status?.active || uciMesh.get("aredn", "multiwan", "active") || "wan";
+const release = "r17";
+%}
+<div id="multiwan-page" class="pw-page" hx-get="u-multiwan" hx-trigger="every 10s [document.visibilityState === 'visible']" hx-swap="outerHTML">
+    <header class="pw-hero">
+        <div class="pw-title-row">
+            <div>
+                <h1>PollyWAN</h1>
+                <p class="pw-subtitle">Adaptive multi-WAN routing for AREDN</p>
+            </div>
+            <div class="pw-muted">Last updated {{strftime("%H:%M:%S")}}</div>
         </div>
-    </div>
-    <hr>
+        <div class="pw-badges" aria-label="PollyWAN summary">
+            <span class="pw-badge {{enabled ? "pw-status-ok" : "pw-status-off"}}"><span class="pw-status-dot"></span>Controller {{enabled ? "Enabled" : "Disabled"}}</span>
+            <span class="pw-badge pw-status-active"><span class="pw-status-dot"></span>Active: {{labelPath(active)}}</span>
+            <span class="pw-badge">{{mode}}</span>
+            <span class="pw-badge">{{release}}</span>
+        </div>
+    </header>
+    <div class="pw-grid">
     {{_R("wan-policy")}}
-    <hr>
     {{_R("ethernet-ports")}}
-    <hr>
     {{_R("usb-wan")}}
-    <hr>
     {{_R("link-calibration")}}
-    <hr>
-    <div class="noctrl">
-        <div class="section-title">Documentation</div>
-        <div class="section">
-            <div class="t"><a target="_blank" href="/apps/aredn-multiwan/help.html">Open the on-node setup and recovery guide</a></div>
-            <div class="s">Port roles, phone USB/PdaNet, adaptive policy, Mesh WAN/Babel behavior, GPS safety, verification, and rollback</div>
+        <section class="pw-card pw-card-full" aria-labelledby="pw-doc-title">
+            <div class="pw-card-head">
+                <div>
+                    <h2 id="pw-doc-title">Documentation</h2>
+                    <div class="pw-muted">Port roles, USB tethering, route policy, GPS safety, verification, and recovery.</div>
+                </div>
+                <a class="pw-doc-link" target="_blank" href="/apps/aredn-multiwan/help.html">Open setup and recovery guide</a>
+            </div>
+        </section>
+    </div>
+</div>
         </div>
     </div>
 </div>

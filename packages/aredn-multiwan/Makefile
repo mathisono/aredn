@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=aredn-multiwan
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=16
+PKG_RELEASE:=17
 PKG_LICENSE:=GPL-3.0-only
 PKG_MAINTAINER:=AREDN contributors
 PKGARCH:=all
@@ -102,6 +102,7 @@ define Package/aredn-multiwan/install
 	$(INSTALL_DATA) ./files/app/main/u-usb-wan.ut $(1)/app/main/
 	$(INSTALL_DATA) ./files/app/main/u-link-calibration.ut $(1)/app/main/
 	$(INSTALL_DIR) $(1)/app/partial
+	$(INSTALL_DATA) ./files/app/partial/multiwan-style.ut $(1)/app/partial/
 	$(INSTALL_DATA) ./files/app/partial/multiwan-page.ut $(1)/app/partial/
 	$(INSTALL_DATA) ./files/app/partial/wan-policy.ut $(1)/app/partial/
 	$(INSTALL_DATA) ./files/app/partial/ethernet-ports.ut $(1)/app/partial/

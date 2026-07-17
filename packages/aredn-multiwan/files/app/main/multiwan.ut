@@ -15,4 +15,5 @@ if (!supportedBoards[hardware.getBoardModel().id]) {
     return;
 }
 %}
+{{_R("multiwan-style")}}
 {{_R("multiwan-page")}}

@@ -1,0 +1,244 @@
+<style id="pollywan-style">
+#multiwan-page {
+  --pw-bg: var(--body-background, var(--background, transparent));
+  --pw-card: var(--card-background, var(--background-alt, rgba(127,127,127,.06)));
+  --pw-card-strong: var(--input-background, rgba(127,127,127,.11));
+  --pw-text: var(--text-color, var(--body-color, inherit));
+  --pw-muted: var(--muted-color, var(--secondary-text-color, rgba(127,127,127,.9)));
+  --pw-border: var(--border-color, rgba(127,127,127,.35));
+  --pw-hover: var(--hover-background, rgba(127,127,127,.14));
+  --pw-ok: var(--success-color, #2f7d32);
+  --pw-warn: var(--warning-color, #a66f00);
+  --pw-bad: var(--error-color, #b3261e);
+  --pw-off: var(--muted-color, #687076);
+  --pw-active: var(--link-color, #0b67b2);
+  box-sizing: border-box;
+  color: var(--pw-text);
+  margin: 0 auto;
+  max-width: 1180px;
+  padding: .5rem;
+}
+#multiwan-page *, #multiwan-page *::before, #multiwan-page *::after,
+.pollywan-dialog *, .pollywan-dialog *::before, .pollywan-dialog *::after {
+  box-sizing: border-box;
+}
+#multiwan-page .pw-hero {
+  border: 1px solid var(--pw-border);
+  border-radius: 8px;
+  background: var(--pw-card);
+  padding: 1rem;
+  margin-bottom: .9rem;
+}
+#multiwan-page .pw-title-row,
+#multiwan-page .pw-card-head,
+#multiwan-page .pw-actions,
+.pollywan-dialog .pw-actions {
+  align-items: flex-start;
+  display: flex;
+  gap: .75rem;
+  justify-content: space-between;
+}
+#multiwan-page h1 {
+  font-size: 1.8rem;
+  line-height: 1.12;
+  margin: 0 0 .25rem;
+}
+#multiwan-page h2 {
+  font-size: 1rem;
+  line-height: 1.25;
+  margin: 0;
+}
+#multiwan-page h3,
+.pollywan-dialog h3 {
+  font-size: .95rem;
+  margin: 0 0 .65rem;
+}
+#multiwan-page .pw-subtitle,
+#multiwan-page .pw-muted,
+#multiwan-page .pw-label,
+.pollywan-dialog .pw-help,
+.pollywan-dialog .m {
+  color: var(--pw-muted);
+}
+#multiwan-page .pw-subtitle { margin: 0; }
+#multiwan-page .pw-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+  margin-top: .75rem;
+}
+#multiwan-page .pw-badge,
+.pollywan-dialog .pw-badge {
+  align-items: center;
+  border: 1px solid var(--pw-border);
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: .78rem;
+  gap: .35rem;
+  line-height: 1.2;
+  min-height: 1.65rem;
+  padding: .25rem .55rem;
+  white-space: nowrap;
+}
+#multiwan-page .pw-grid {
+  display: grid;
+  gap: .8rem;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+#multiwan-page .pw-card {
+  background: var(--pw-card);
+  border: 1px solid var(--pw-border);
+  border-radius: 8px;
+  min-width: 0;
+  padding: .9rem;
+}
+#multiwan-page .pw-card-main { grid-column: span 3; }
+#multiwan-page .pw-card-wide { grid-column: span 6; }
+#multiwan-page .pw-card-full { grid-column: 1 / -1; }
+#multiwan-page .pw-card-clickable {
+  cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease, transform .12s ease;
+}
+#multiwan-page .pw-card-clickable:hover {
+  background: var(--pw-hover);
+  border-color: var(--pw-active);
+}
+#multiwan-page .pw-card-clickable:focus,
+#multiwan-page .pw-card-clickable:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--pw-active) 45%, transparent);
+  outline-offset: 2px;
+}
+#multiwan-page .pw-configure {
+  color: var(--pw-active);
+  font-size: .82rem;
+  white-space: nowrap;
+}
+#multiwan-page .pw-status-dot {
+  border-radius: 999px;
+  display: inline-block;
+  height: .65rem;
+  width: .65rem;
+}
+#multiwan-page .pw-status-ok .pw-status-dot,
+#multiwan-page .pw-badge.pw-status-ok { border-color: var(--pw-ok); }
+#multiwan-page .pw-status-ok .pw-status-dot { background: var(--pw-ok); }
+#multiwan-page .pw-status-warn .pw-status-dot,
+#multiwan-page .pw-badge.pw-status-warn { border-color: var(--pw-warn); }
+#multiwan-page .pw-status-warn .pw-status-dot { background: var(--pw-warn); }
+#multiwan-page .pw-status-bad .pw-status-dot,
+#multiwan-page .pw-badge.pw-status-bad { border-color: var(--pw-bad); }
+#multiwan-page .pw-status-bad .pw-status-dot { background: var(--pw-bad); }
+#multiwan-page .pw-status-off .pw-status-dot,
+#multiwan-page .pw-badge.pw-status-off { border-color: var(--pw-off); }
+#multiwan-page .pw-status-off .pw-status-dot { background: var(--pw-off); }
+#multiwan-page .pw-status-active,
+#multiwan-page .pw-badge.pw-status-active { border-color: var(--pw-active); }
+#multiwan-page .pw-status-active .pw-status-dot { background: var(--pw-active); }
+#multiwan-page .pw-meta-grid {
+  display: grid;
+  gap: .45rem .65rem;
+  grid-template-columns: minmax(5.5rem, auto) minmax(0, 1fr);
+  margin-top: .8rem;
+}
+#multiwan-page .pw-label {
+  font-size: .76rem;
+}
+#multiwan-page .pw-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+#multiwan-page .pw-route-list,
+#multiwan-page .pw-port-grid,
+#multiwan-page .pw-cal-grid,
+#multiwan-page .pw-wan3-grid {
+  display: grid;
+  gap: .55rem;
+}
+#multiwan-page .pw-route-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#multiwan-page .pw-port-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+#multiwan-page .pw-cal-grid,
+#multiwan-page .pw-wan3-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+#multiwan-page .pw-tile {
+  background: var(--pw-card-strong);
+  border: 1px solid var(--pw-border);
+  border-radius: 7px;
+  min-width: 0;
+  padding: .65rem;
+}
+#multiwan-page .pw-port-label {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+#multiwan-page .pw-doc-link {
+  align-items: center;
+  border: 1px solid var(--pw-border);
+  border-radius: 7px;
+  display: inline-flex;
+  min-height: 2.6rem;
+  padding: .55rem .75rem;
+  text-decoration: none;
+}
+#multiwan-page .pw-doc-link:hover { background: var(--pw-hover); }
+.pollywan-dialog {
+  max-width: min(760px, calc(100vw - 1rem));
+}
+.pollywan-dialog .pw-notice {
+  border: 1px solid var(--pw-border);
+  border-radius: 7px;
+  margin-bottom: .75rem;
+  padding: .65rem;
+}
+.pollywan-dialog .pw-notice-error { border-color: var(--pw-bad, #b3261e); }
+.pollywan-dialog .pw-notice-ok { border-color: var(--pw-ok, #2f7d32); }
+.pollywan-dialog .pw-form-row {
+  align-items: center;
+  border-top: 1px solid var(--pw-border, rgba(127,127,127,.35));
+  display: grid;
+  gap: .75rem;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, auto);
+  padding: .7rem 0;
+}
+.pollywan-dialog .pw-control {
+  justify-self: end;
+  min-width: 0;
+}
+.pollywan-dialog input[type="text"],
+.pollywan-dialog input[type="password"],
+.pollywan-dialog input[type="url"],
+.pollywan-dialog input[type="number"],
+.pollywan-dialog select {
+  max-width: 100%;
+}
+.pollywan-dialog .pw-actions {
+  flex-wrap: wrap;
+  margin-top: .8rem;
+}
+.pollywan-dialog .pw-spacer { flex: 1 1 auto; }
+@media (max-width: 900px) {
+  #multiwan-page .pw-card-main,
+  #multiwan-page .pw-card-wide { grid-column: span 6; }
+  #multiwan-page .pw-route-list,
+  #multiwan-page .pw-port-grid,
+  #multiwan-page .pw-cal-grid,
+  #multiwan-page .pw-wan3-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  #multiwan-page { padding: .25rem; }
+  #multiwan-page .pw-title-row,
+  #multiwan-page .pw-card-head { display: block; }
+  #multiwan-page .pw-card-main,
+  #multiwan-page .pw-card-wide,
+  #multiwan-page .pw-card-full { grid-column: 1 / -1; }
+  #multiwan-page .pw-route-list,
+  #multiwan-page .pw-port-grid,
+  #multiwan-page .pw-cal-grid,
+  #multiwan-page .pw-wan3-grid { grid-template-columns: 1fr; }
+  #multiwan-page .pw-meta-grid { grid-template-columns: 1fr; }
+  .pollywan-dialog .pw-form-row { grid-template-columns: 1fr; }
+  .pollywan-dialog .pw-control { justify-self: stretch; }
+  .pollywan-dialog .pw-control > *,
+  .pollywan-dialog button { min-height: 2.5rem; }
+  .pollywan-dialog select,
+  .pollywan-dialog input:not([type="checkbox"]) { width: 100%; }
+}
+</style>
