@@ -1,5 +1,5 @@
 #!/bin/sh
-# Static and disposable-mock verification for the standalone PollyWAN r8 source.
+# Static and disposable-mock verification for the standalone PollyWAN r9 source.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
@@ -78,7 +78,7 @@ done
 # Package metadata and optional-only target contract.
 require_text Makefile 'PKG_NAME:=aredn-multiwan'
 require_text Makefile 'PKG_VERSION:=0.1.0'
-require_text Makefile 'PKG_RELEASE:=8'
+require_text Makefile 'PKG_RELEASE:=9'
 require_text Makefile 'URL:=https://github.com/mathisono/AREDN_PollyWAN'
 require_text Makefile '+ip-tiny'
 require_text Makefile '+redsocks'
@@ -208,6 +208,8 @@ require_text "$SLA" 'persisted_active'
 require_text "$SLA" 'route_active'
 reject_text "$SLA" 'standby_probe_failed'
 require_text "$SLA" 'route_valid'
+require_text "$SLA" '(src|from) $source'
+require_text "$SLA" 'unreachable|prohibit|blackhole|throw'
 require_text "$SLA" 'gateway_icmp_probe'
 require_text "$SLA" 'ping -c 1 -W 2 -I "$source" "$gateway"'
 require_text "$SLA" 'https_probe'
@@ -341,4 +343,4 @@ for path in (root / 'files/app').rglob('*.ut'):
 print('markup/template balance passed')
 PY
 
-echo 'PollyWAN r8 static and mock verification passed'
+echo 'PollyWAN r9 static and mock verification passed'

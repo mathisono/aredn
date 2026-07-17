@@ -131,10 +131,12 @@ route_valid()
     device="$1"; source="$2"; gateway="$3"
     valid_ipv4 "$source" || return 1
     valid_ipv4 "$gateway" || return 0
-    route="$(ip -4 route get "$gateway" from "$source" oif "$device" 2>/dev/null || true)"
-    [ -n "$route" ] || return 1
+    route="$(ip -4 route get "$gateway" from "$source" oif "$device" 2>/dev/null)" || return 1
     printf '%s\n' "$route" | grep -q "dev $device" || return 1
-    printf '%s\n' "$route" | grep -q "src $source" || return 1
+    printf '%s\n' "$route" | grep -Eq '(^| )(unreachable|prohibit|blackhole|throw)( |$)' && return 1
+    # OpenWrt/iproute may echo a source-constrained lookup as either
+    # "src SOURCE" or "from SOURCE"; both prove the candidate source was used.
+    printf '%s\n' "$route" | grep -Eq "(src|from) $source( |$)" || return 1
 }
 
 gateway_icmp_probe()

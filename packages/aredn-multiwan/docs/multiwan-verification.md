@@ -1,4 +1,4 @@
-# PollyWAN r8 build and verification
+# PollyWAN r9 build and verification
 
 ## 1. Static source verification
 
@@ -6,7 +6,7 @@
 ./tests/verify.sh
 ```
 
-The verifier checks package boundaries, executable modes, BusyBox shell syntax, r8 metadata/dependencies, administrator-only UI handlers, DSA and swconfig port generation, Wi-Fi WAN ownership, rollback, GPS non-interference, WAN 3 network-only discovery, calibration bounds, routing-table ownership, Babel guards, tunnel isolation, markup, documentation, and repository-sync metadata.
+The verifier checks package boundaries, executable modes, BusyBox shell syntax, r9 metadata/dependencies, administrator-only UI handlers, DSA and swconfig port generation, Wi-Fi WAN ownership, rollback, GPS non-interference, WAN 3 network-only discovery, calibration bounds, routing-table ownership, Babel guards, tunnel isolation, markup, documentation, and repository-sync metadata.
 
 Static success is not an APK build or physical-node pass.
 
@@ -25,8 +25,8 @@ make MAINTARGET=ath79 SUBTARGET=mikrotik prepare
 
 grep '^CONFIG_PACKAGE_aredn-multiwan=m$' openwrt/.config
 make -C openwrt package/aredn-multiwan/clean V=sc -j1
-make -C openwrt package/aredn-multiwan/compile V=sc -j1 2>&1 | tee /tmp/pollywan-r8-build.log
-find openwrt/bin -name 'aredn-multiwan-0.1.0-r8.apk' -print -exec sha256sum {} \;
+make -C openwrt package/aredn-multiwan/compile V=sc -j1 2>&1 | tee /tmp/pollywan-r9-build.log
+find openwrt/bin -name 'aredn-multiwan-0.1.0-r9.apk' -print -exec sha256sum {} \;
 ```
 
 If matching kernel-module APKs are unavailable, build the full exact target. Never mix architecture, firmware, or kernel ABI.
@@ -56,7 +56,7 @@ nft list ruleset > /tmp/pollywan-before/nft
 Install without enabling:
 
 ```sh
-apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0-r8.apk
+apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0-r9.apk
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.enabled)" = 0 ]
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.port_roles_enabled)" = 0 ]
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.wan3_enable)" = 0 ]
@@ -206,4 +206,4 @@ apk del aredn-multiwan
 
 Verify previous AREDN include files and roles are restored, normal Ethernet or Wi-Fi WAN 1 returns, WAN 3/proxy/package tables/rules/guards/UI are removed, and GPS/radio state remains unchanged.
 
-Collect Git SHAs, subtree sync result, APK/dependency checksums, build logs, exact ABI, before/after GPS/radio snapshots, role/rollback evidence, route/rule dumps, calibration/SLA JSON, Babel/tunnel/PdaNet tests, and uninstall results. Do not mark r8 ready until package build and physical target gates pass.
+Collect Git SHAs, subtree sync result, APK/dependency checksums, build logs, exact ABI, before/after GPS/radio snapshots, role/rollback evidence, route/rule dumps, calibration/SLA JSON, Babel/tunnel/PdaNet tests, and uninstall results. Do not mark r9 ready until package build and physical target gates pass.
