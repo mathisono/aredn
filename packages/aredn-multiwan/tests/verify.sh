@@ -1,5 +1,5 @@
 #!/bin/sh
-# Static and disposable-mock verification for the standalone PollyWAN r17 source.
+# Static and disposable-mock verification for the standalone PollyWAN r18 source.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
@@ -79,7 +79,7 @@ done
 # Package metadata and optional-only target contract.
 require_text Makefile 'PKG_NAME:=aredn-multiwan'
 require_text Makefile 'PKG_VERSION:=0.1.0'
-require_text Makefile 'PKG_RELEASE:=17'
+require_text Makefile 'PKG_RELEASE:=18'
 require_text Makefile 'URL:=https://github.com/mathisono/AREDN_PollyWAN'
 require_text Makefile '+ip-tiny'
 require_text Makefile '+redsocks'
@@ -97,6 +97,9 @@ require_text Makefile 'Package/aredn-multiwan/prerm'
 require_text Makefile 'files/app/partial/multiwan-style.ut'
 require_text LICENSE 'GNU General Public License'
 require_text AREDNLicense.txt 'not represented as an official'
+
+# AREDN 4.26's UCode renderer does not support JavaScript optional chaining.
+! grep -R -nF '?.' files/app || fail 'UI templates must not use optional chaining'
 
 # Defaults are inert and GPS/radio neutral.
 DEFAULTS=files/etc/uci-defaults/95-aredn-multiwan
@@ -393,4 +396,4 @@ require_text files/usr/local/bin/wan3-manager 'function cidr_prefix'
 require_text files/usr/local/bin/wan-route-cache 'function cidr_prefix'
 require_text files/usr/local/bin/wan-route-cache 'connected_prefix_from_cidr "$cidr"'
 
-echo 'PollyWAN r17 static and mock verification passed'
+echo 'PollyWAN r18 static and mock verification passed'

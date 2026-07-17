@@ -67,15 +67,15 @@ let iface = null;
 try { iface = ubus.call("network.interface.wan3", "status"); } catch (_) {}
 const addresses = (iface && iface["ipv4-address"]) || [];
 const address = length(addresses) ? addresses[0].address : "";
-const device = iface?.l3_device || iface?.device || state?.device || "";
-const supportMessage = state?.message || "Existing kernel USB-network support is checked only when PollyWAN and WAN 3 are enabled";
+const device = iface && (iface.l3_device || iface.device) || state && state.device || "";
+const supportMessage = state && state.message || "Existing kernel USB-network support is checked only when PollyWAN and WAN 3 are enabled";
 %}
 <div class="dialog pollywan-dialog">
     {{_R("dialog-header", "WAN 3: phone USB tether / PdaNet")}}
     <div>
         {% if (error) { %}<div class="pw-notice pw-notice-error"><b>{{error}}</b></div>{% } else if (message) { %}<div class="pw-notice pw-notice-ok">{{message}}</div>{% } %}
-        <div class="cols"><div><div class="o">Topology</div><div class="m">Android phone &rarr; data USB cable &rarr; hAP USB host &rarr; RNDIS/CDC network &rarr; wan3 DHCP</div></div><div style="flex:0;text-align:right"><div>{{iface?.up ? "up" : "down"}}</div><div class="m">{{device || "no device"}} &middot; {{address || "no IPv4"}}</div></div></div>
-        <div class="cols"><div><div class="o">Existing kernel support</div><div class="m">{{supportMessage}}</div></div><div style="flex:0;text-align:right"><div>{{device || "none"}}</div><div class="m">{{iface?.up ? "USB network device" : "not active"}}</div></div></div>
+        <div class="cols"><div><div class="o">Topology</div><div class="m">Android phone &rarr; data USB cable &rarr; hAP USB host &rarr; RNDIS/CDC network &rarr; wan3 DHCP</div></div><div style="flex:0;text-align:right"><div>{{iface && iface.up ? "up" : "down"}}</div><div class="m">{{device || "no device"}} &middot; {{address || "no IPv4"}}</div></div></div>
+        <div class="cols"><div><div class="o">Existing kernel support</div><div class="m">{{supportMessage}}</div></div><div style="flex:0;text-align:right"><div>{{device || "none"}}</div><div class="m">{{iface && iface.up ? "USB network device" : "not active"}}</div></div></div>
         <form id="usb-wan-form">
             <div class="cols"><div><div class="o">Enable WAN 3 USB</div><div class="m">Auto-discovery considers only USB-backed network devices, never serial GPS TTYs</div></div><div style="flex:0"><input type="checkbox" name="wan3_enable" {{enabled ? "checked" : ""}}></div></div>
             <div class="cols"><div><div class="o">hAP USB network interface</div><div class="m">Use auto, or enter the exact existing RNDIS/CDC interface; PollyWAN does not replace kernel modules</div></div><div style="flex:0"><input name="wan3_device" type="text" size="18" pattern="auto|[A-Za-z0-9_.:-]+" value="{{uciMesh.get("aredn", "multiwan", "wan3_device") || "auto"}}" required></div></div>
@@ -88,7 +88,7 @@ const supportMessage = state?.message || "Existing kernel USB-network support is
             {% if (havePassword) { %}<div class="cols"><div><div class="o">Clear saved password</div></div><div style="flex:0"><input type="checkbox" name="proxy_password_clear"></div></div>{% } %}
         </form>
         {{_H("PdaNet mode transparently converts eligible public IPv4 TCP to HTTP CONNECT. It excludes mesh, LAN, 44Net, private, reserved, proxy-destination, and tunnel traffic. General UDP, incoming connections, and port forwarding do not traverse this proxy. WAN 3 disabled means PollyWAN does not touch USB networking; if existing kernel USB-network support is unavailable, WAN 3 stays down without routes or firewall changes. Serial GPS time service remains owned entirely by AREDN/gpsd.")}}
-        <div class="pw-actions"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#usb-wan-form" hx-vals='{"action":"save"}'>Save USB settings</button><div class="pw-spacer"></div><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"fallback"}'>Use WAN 1</button><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"activate"}' {{!enabled || !iface?.up ? "disabled" : ""}}>Use WAN 3 now</button></div>
+        <div class="pw-actions"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#usb-wan-form" hx-vals='{"action":"save"}'>Save USB settings</button><div class="pw-spacer"></div><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"fallback"}'>Use WAN 1</button><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"activate"}' {{!enabled || !(iface && iface.up) ? "disabled" : ""}}>Use WAN 3 now</button></div>
     </div>
     {{_R("dialog-footer", "nocancel")}}
     <script>(function(){ {{_R("open")}} htmx.on("#dialog-done", "click", _ => htmx.ajax("GET", "/a/u-usb-wan", { target: "#usb-wan", swap: "outerHTML" })); })();</script>

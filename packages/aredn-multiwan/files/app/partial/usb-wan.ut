@@ -3,9 +3,9 @@ let iface = null;
 try { iface = ubus.call("network.interface.wan3", "status"); } catch (_) {}
 const addresses = (iface && iface["ipv4-address"]) || [];
 const enabled = uciMesh.get("aredn", "multiwan", "wan3_enable") === "1";
-const device = iface?.l3_device || iface?.device || "";
-const stateText = enabled ? iface?.up ? "Healthy" : "Unavailable" : "Disabled";
-const stateClass = enabled ? iface?.up ? "pw-status-ok" : "pw-status-warn" : "pw-status-off";
+const device = iface && (iface.l3_device || iface.device) || "";
+const stateText = enabled ? iface && iface.up ? "Healthy" : "Unavailable" : "Disabled";
+const stateClass = enabled ? iface && iface.up ? "pw-status-ok" : "pw-status-warn" : "pw-status-off";
 %}
 <section id="usb-wan" class="ctrl pw-card pw-card-main pw-card-clickable {{stateClass}}" hx-get="status/e/usb-wan" hx-target="#ctrl-modal" tabindex="0" aria-labelledby="pw-wan3-title">
     <div class="pw-card-head"><h2 id="pw-wan3-title">WAN 3 USB</h2><span class="pw-configure">Configure</span></div>

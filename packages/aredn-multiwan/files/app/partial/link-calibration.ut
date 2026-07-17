@@ -11,8 +11,8 @@ const names = [ { name: "wan", label: "WAN 1" }, { name: "wan2", label: "WAN 2" 
         <div class="pw-tile">
             <strong>{{item.label}}</strong>
             <div>{{r ? sprintf("%.1f Mbps", r.mbps) : "Not calibrated"}}</div>
-            <div class="pw-muted">{{r?.bin || "No bin"}}</div>
-            <div class="pw-muted">{{r?.time || "No result age"}}</div>
+            <div class="pw-muted">{{r && r.bin || "No bin"}}</div>
+            <div class="pw-muted">{{r && r.time || "No result age"}}</div>
         </div>
         {% } %}
     </div>

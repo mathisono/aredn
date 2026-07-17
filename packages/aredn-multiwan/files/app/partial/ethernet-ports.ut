@@ -21,7 +21,7 @@ for (let i = 1; i <= 5; i++) {
     if (!wifiWan.active && role === "wan") push(wan1, `P${i}`);
     else if (role === "wan2") push(wan2, `P${i}`);
 }
-const tx = s?.pending_token ? "pending confirmation" : s?.applied ? "ready" : uciMesh.get("aredn", "multiwan", "port_roles_enabled") === "1" ? "ready" : "inactive";
+const tx = s && s.pending_token ? "pending confirmation" : s && s.applied ? "ready" : uciMesh.get("aredn", "multiwan", "port_roles_enabled") === "1" ? "ready" : "inactive";
 %}
 <section id="ethernet-ports" class="ctrl pw-card pw-card-wide pw-card-clickable" hx-get="status/e/ethernet-ports" hx-target="#ctrl-modal" tabindex="0" aria-labelledby="pw-ports-title">
     <div class="pw-card-head"><h2 id="pw-ports-title">Ethernet Port Roles</h2><span class="pw-configure">Configure</span></div>

@@ -104,13 +104,13 @@ const enabled = uciMesh.get("aredn", "multiwan", "enabled") === "1";
 const mode = uciMesh.get("aredn", "multiwan", "selection_mode") || "manual";
 const active = uciMesh.get("aredn", "multiwan", "active") || "wan";
 const status = readJson("/tmp/wan-sla/status.json");
-const candidates = status?.candidates || [];
+const candidates = status && status.candidates || [];
 %}
 <div class="dialog pollywan-dialog">
     {{_R("dialog-header", "PollyWAN selection policy")}}
     <div>
         {% if (error) { %}<div class="pw-notice pw-notice-error"><b>{{error}}</b></div>{% } else if (message) { %}<div class="pw-notice pw-notice-ok">{{message}}</div>{% } %}
-        <div class="cols"><div><div class="o">Runtime decision</div><div class="m">{{status?.message || "No SLA status is available"}}</div></div><div style="flex:0;text-align:right"><div>{{status?.active || active}}</div><div class="m">{{status?.selected_bin || "unknown"}}</div></div></div>
+        <div class="cols"><div><div class="o">Runtime decision</div><div class="m">{{status && status.message || "No SLA status is available"}}</div></div><div style="flex:0;text-align:right"><div>{{status && status.active || active}}</div><div class="m">{{status && status.selected_bin || "unknown"}}</div></div></div>
         <div class="cols"><div><div class="o">WAN 1 transport</div><div class="m">AREDN Wi-Fi client mode still uses logical interface wan and private table 101</div></div><div style="flex:0;text-align:right"><div>{{wifiWan.label}}</div><div class="m">{{wifiWan.active ? wifiWan.device : "br-wan"}}</div></div></div>
         <form id="wan-policy-form">
             <div class="cols"><div><div class="o">Enable PollyWAN</div><div class="m">Disabled installation is inert and leaves ordinary AREDN networking and GPS untouched</div></div><div style="flex:0"><input type="checkbox" name="enabled" {{enabled ? "checked" : ""}}></div></div>
