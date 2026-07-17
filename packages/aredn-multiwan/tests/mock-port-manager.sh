@@ -197,6 +197,10 @@ run_ethernet_case()
     POLLYWAN_TEST_MODE=1 chroot "$root" /usr/local/bin/wan-port-manager restore
     assert_gps_unchanged "$root"
     [ ! -e "$root/etc/aredn_include/.aredn-multiwan-ports" ]
+    [ "$(chroot "$root" /sbin/uci get aredn.multiwan.port_roles_enabled)" = 0 ]
+    [ "$(chroot "$root" /sbin/uci get aredn.multiwan.wan2_enable)" = 0 ]
+    [ "$(chroot "$root" /sbin/uci get aredn.multiwan.wan3_enable)" = 0 ]
+    [ "$(chroot "$root" /sbin/uci get aredn.multiwan.wan3_proxy_enable)" = 0 ]
     echo "mock Ethernet port generation passed: $kind"
 }
 

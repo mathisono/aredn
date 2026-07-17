@@ -534,6 +534,11 @@ restore_roles()
     [ "${POLLYWAN_TEST_MODE:-0}" = 1 ] || sleep 3
     /usr/local/bin/wan3-manager restore >/dev/null 2>&1 || true
     /usr/local/bin/wan-tunnel-guard apply >/dev/null 2>&1 || true
+    uci -c /etc/config.mesh set "$CONFIG_PACKAGE.$CONFIG_SECTION.port_roles_enabled=0"
+    uci -c /etc/config.mesh set "$CONFIG_PACKAGE.$CONFIG_SECTION.wan2_enable=0"
+    uci -c /etc/config.mesh set "$CONFIG_PACKAGE.$CONFIG_SECTION.wan3_enable=0"
+    uci -c /etc/config.mesh set "$CONFIG_PACKAGE.$CONFIG_SECTION.wan3_proxy_enable=0"
+    uci -c /etc/config.mesh commit "$CONFIG_PACKAGE"
     rm -f /tmp/wan-sla/inhibit
     rm -rf "$BACKUP_DIR"
     write_state restored "AREDN Ethernet configuration restored ($reason)"
