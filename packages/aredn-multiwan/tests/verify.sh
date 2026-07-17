@@ -1,5 +1,5 @@
 #!/bin/sh
-# Static and disposable-mock verification for the standalone PollyWAN r19 source.
+# Static and disposable-mock verification for the standalone PollyWAN r20 source.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
@@ -42,7 +42,6 @@ docs/multiwan-verification.md
 tools/openclaw-build-test-prompt.md
 tools/sync-integration.sh
 tests/test-selection-model.py
-files/app/main/multiwan.ut
 files/app/main/u-multiwan.ut
 files/app/main/u-wan-policy.ut
 files/app/main/u-ethernet-ports.ut
@@ -54,6 +53,7 @@ files/app/main/status/e/usb-wan.ut
 files/app/main/status/e/link-calibration.ut
 files/app/partial/multiwan-page.ut
 files/app/partial/multiwan-style.ut
+files/app/partial/multiwan.ut
 files/app/partial/wan-policy.ut
 files/app/partial/ethernet-ports.ut
 files/app/partial/usb-wan.ut
@@ -79,7 +79,7 @@ done
 # Package metadata and optional-only target contract.
 require_text Makefile 'PKG_NAME:=aredn-multiwan'
 require_text Makefile 'PKG_VERSION:=0.1.0'
-require_text Makefile 'PKG_RELEASE:=19'
+require_text Makefile 'PKG_RELEASE:=20'
 require_text Makefile 'URL:=https://github.com/mathisono/AREDN_PollyWAN'
 require_text Makefile '+ip-tiny'
 require_text Makefile '+redsocks'
@@ -95,6 +95,8 @@ require_text Makefile 'existing AREDN Wi-Fi client logical interface'
 require_text Makefile 'Installation is disabled and inert'
 require_text Makefile 'Package/aredn-multiwan/prerm'
 require_text Makefile 'files/app/partial/multiwan-style.ut'
+require_text Makefile 'files/app/partial/multiwan.ut'
+reject_text Makefile 'files/app/main/multiwan.ut'
 require_text LICENSE 'GNU General Public License'
 require_text AREDNLicense.txt 'not represented as an official'
 
@@ -397,4 +399,4 @@ require_text files/usr/local/bin/wan3-manager 'function cidr_prefix'
 require_text files/usr/local/bin/wan-route-cache 'function cidr_prefix'
 require_text files/usr/local/bin/wan-route-cache 'connected_prefix_from_cidr "$cidr"'
 
-echo 'PollyWAN r19 static and mock verification passed'
+echo 'PollyWAN r20 static and mock verification passed'
