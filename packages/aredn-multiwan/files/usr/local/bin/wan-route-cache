@@ -24,6 +24,26 @@ valid_ipv4()
     '
 }
 
+connected_prefix_from_cidr()
+{
+    printf '%s\n' "$1" | awk -F'[./]' '
+        NF != 5 { exit 1 }
+        {
+            for (i = 1; i <= 5; i++) if ($i !~ /^[0-9]+$/) exit 1
+            if ($1 > 255 || $2 > 255 || $3 > 255 || $4 > 255 || $5 < 0 || $5 > 32) exit 1
+            addr = (($1 * 256 + $2) * 256 + $3) * 256 + $4
+            hostbits = 32 - $5
+            block = 1
+            for (i = 0; i < hostbits; i++) block *= 2
+            net = int(addr / block) * block
+            o1 = int(net / 16777216); net -= o1 * 16777216
+            o2 = int(net / 65536); net -= o2 * 65536
+            o3 = int(net / 256); o4 = net - o3 * 256
+            printf "%d.%d.%d.%d/%d\n", o1, o2, o3, o4, $5
+        }
+    '
+}
+
 wan_values()
 {
     case "$1" in
@@ -54,13 +74,18 @@ connected_prefix()
 {
     device="$1"
     source="$2"
-    ip -4 route show table all dev "$device" scope link 2>/dev/null | \
+    prefix="$(ip -4 route show table all dev "$device" scope link 2>/dev/null | \
         awk -v source="$source" '
             function cidr_prefix(value, parts) {
                 return split(value, parts, "/") == 2 && parts[1] ~ /^[0-9.]+$/ && parts[2] ~ /^[0-9]+$/
             }
             cidr_prefix($1) && $0 ~ ("src " source) { print $1; exit }
-        '
+        ')"
+    [ -n "$prefix" ] || prefix="$(ip -4 addr show dev "$device" 2>/dev/null | awk '/ inet / { print $2; exit }' | {
+        read cidr || true
+        [ -n "$cidr" ] && connected_prefix_from_cidr "$cidr" 2>/dev/null || true
+    })"
+    printf '%s\n' "$prefix"
 }
 
 cache_one()
