@@ -1,4 +1,4 @@
-# PollyWAN r13 build and verification
+# PollyWAN r14 build and verification
 
 ## 1. Static source verification
 
@@ -25,8 +25,8 @@ make MAINTARGET=ath79 SUBTARGET=mikrotik prepare
 
 grep '^CONFIG_PACKAGE_aredn-multiwan=m$' openwrt/.config
 make -C openwrt package/aredn-multiwan/clean V=sc -j1
-make -C openwrt package/aredn-multiwan/compile V=sc -j1 2>&1 | tee /tmp/pollywan-r13-build.log
-find openwrt/bin -name 'aredn-multiwan-0.1.0-r13.apk' -print -exec sha256sum {} \;
+make -C openwrt package/aredn-multiwan/compile V=sc -j1 2>&1 | tee /tmp/pollywan-r14-build.log
+find openwrt/bin -name 'aredn-multiwan-0.1.0-r14.apk' -print -exec sha256sum {} \;
 ```
 
 If matching kernel-module APKs are unavailable, build the full exact target. Never mix architecture, firmware, or kernel ABI.
@@ -56,7 +56,7 @@ nft list ruleset > /tmp/pollywan-before/nft
 Install without enabling:
 
 ```sh
-apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0-r13.apk
+apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0-r14.apk
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.enabled)" = 0 ]
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.port_roles_enabled)" = 0 ]
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.wan3_enable)" = 0 ]

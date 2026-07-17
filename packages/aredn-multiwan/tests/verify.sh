@@ -1,5 +1,5 @@
 #!/bin/sh
-# Static and disposable-mock verification for the standalone PollyWAN r13 source.
+# Static and disposable-mock verification for the standalone PollyWAN r14 source.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
@@ -78,7 +78,7 @@ done
 # Package metadata and optional-only target contract.
 require_text Makefile 'PKG_NAME:=aredn-multiwan'
 require_text Makefile 'PKG_VERSION:=0.1.0'
-require_text Makefile 'PKG_RELEASE:=13'
+require_text Makefile 'PKG_RELEASE:=14'
 require_text Makefile 'URL:=https://github.com/mathisono/AREDN_PollyWAN'
 require_text Makefile '+ip-tiny'
 require_text Makefile '+redsocks'
@@ -190,6 +190,8 @@ require_text "$WAN3" 'BABEL_EXPORT_TABLE=28'
 require_text "$WAN3" 'REMOTE_MESH_TABLE=22'
 require_text "$WAN3" 'snapshot_routes'
 require_text "$WAN3" 'restore_route_snapshot'
+require_text "$WAN3" 'function cidr_prefix'
+require_text "$WAN3" 'split(value, parts, "/") == 2'
 require_text "$WAN3" 'Publish table 28 last'
 require_text "$WAN3" 'table 22 is available'
 require_text "$WAN3" 'start_proxy "$device" "$want_shared"'
@@ -345,7 +347,7 @@ PY
 
 require_text "$SLA" 'manual selection recovered: $active'
 require_text "$SLA" '[ "$active" = none ] || [ "$active" = mesh ]'
-require_text files/usr/local/bin/wan3-manager 'index($1, "/")'
-require_text files/usr/local/bin/wan-route-cache 'index($1, "/")'
+require_text files/usr/local/bin/wan3-manager 'function cidr_prefix'
+require_text files/usr/local/bin/wan-route-cache 'function cidr_prefix'
 
-echo 'PollyWAN r13 static and mock verification passed'
+echo 'PollyWAN r14 static and mock verification passed'

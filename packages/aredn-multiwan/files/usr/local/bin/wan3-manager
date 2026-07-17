@@ -243,8 +243,18 @@ interface_values()
         [ "$target" = 0.0.0.0 ] || return 1
     fi
 
-    network="$(ip -4 route show table all dev "$device" scope link 2>/dev/null | awk -v source="$source" 'index($1, "/") && $1 ~ /^[0-9.\\/]+$/ && $0 ~ ("src " source) { print $1; exit }')"
-    [ -n "$network" ] || network="$(ip -4 route show table all dev "$device" scope link 2>/dev/null | awk 'index($1, "/") && $1 ~ /^[0-9.\\/]+$/ { print $1; exit }')"
+    network="$(ip -4 route show table all dev "$device" scope link 2>/dev/null | awk -v source="$source" '
+        function cidr_prefix(value, parts) {
+            return split(value, parts, "/") == 2 && parts[1] ~ /^[0-9.]+$/ && parts[2] ~ /^[0-9]+$/
+        }
+        cidr_prefix($1) && $0 ~ ("src " source) { print $1; exit }
+    ')"
+    [ -n "$network" ] || network="$(ip -4 route show table all dev "$device" scope link 2>/dev/null | awk '
+        function cidr_prefix(value, parts) {
+            return split(value, parts, "/") == 2 && parts[1] ~ /^[0-9.]+$/ && parts[2] ~ /^[0-9]+$/
+        }
+        cidr_prefix($1) { print $1; exit }
+    ')"
     case "$network" in *.*/*) ;; *) return 1 ;; esac
     printf '%s|%s|%s|%s\n' "$device" "$source" "$gateway" "$network"
 }
