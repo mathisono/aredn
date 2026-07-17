@@ -1,11 +1,9 @@
 {%
-function readJson(path) { const v = fs.readfile(path); if (!v) return null; try { return json(v); } catch (_) { return null; } }
 function labelPath(value) { return value === "wan" ? "WAN 1" : value === "wan2" ? "WAN 2" : value === "wan3" ? "WAN 3 USB" : value === "mesh" ? "Remote Mesh WAN" : "Unknown"; }
-const status = readJson("/tmp/wan-sla/status.json");
 const enabled = uciMesh.get("aredn", "multiwan", "enabled") === "1";
 const mode = uciMesh.get("aredn", "multiwan", "selection_mode") || "manual";
-const active = status && status.active || uciMesh.get("aredn", "multiwan", "active") || "wan";
-const release = "r18";
+const active = uciMesh.get("aredn", "multiwan", "active") || "wan";
+const release = "r19";
 %}
 <div id="multiwan-page" class="pw-page" hx-get="u-multiwan" hx-trigger="every 10s [document.visibilityState === 'visible']" hx-swap="outerHTML">
     <header class="pw-hero">
@@ -14,7 +12,7 @@ const release = "r18";
                 <h1>PollyWAN</h1>
                 <p class="pw-subtitle">Adaptive multi-WAN routing for AREDN</p>
             </div>
-            <div class="pw-muted">Last updated {{strftime("%H:%M:%S")}}</div>
+            <div class="pw-muted">Refreshes every 10 seconds</div>
         </div>
         <div class="pw-badges" aria-label="PollyWAN summary">
             <span class="pw-badge {{enabled ? "pw-status-ok" : "pw-status-off"}}"><span class="pw-status-dot"></span>Controller {{enabled ? "Enabled" : "Disabled"}}</span>
@@ -37,8 +35,5 @@ const release = "r18";
                 <a class="pw-doc-link" target="_blank" href="/apps/aredn-multiwan/help.html">Open setup and recovery guide</a>
             </div>
         </section>
-    </div>
-</div>
-        </div>
     </div>
 </div>
