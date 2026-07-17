@@ -324,15 +324,28 @@ choose_candidate()
 {
     preferred="$1"
     best=''; best_score=-1
-        while IFS='|' read -r name configured healthy bin score mbps device reason age probe_reason selection_role active_route; do
-            [ "$configured" = 1 ] || continue
-            [ "$healthy" = 1 ] || continue
+    while IFS='|' read -r name configured healthy bin score mbps device reason age probe_reason selection_role active_route; do
+        [ "$configured" = 1 ] || continue
+        [ "$healthy" = 1 ] || continue
         [ "$score" -gt 0 ] || continue
         if [ "$score" -gt "$best_score" ] || { [ "$score" -eq "$best_score" ] && [ "$name" = "$preferred" ]; }; then
             best="$name"; best_score="$score"
         fi
     done < "$CANDIDATE_FILE"
     printf '%s|%s\n' "$best" "$best_score"
+}
+
+choose_healthy_candidate()
+{
+    preferred="$1"
+    fallback=''
+    while IFS='|' read -r name configured healthy bin score mbps device reason age probe_reason selection_role active_route; do
+        [ "$configured" = 1 ] || continue
+        [ "$healthy" = 1 ] || continue
+        [ "$name" = "$preferred" ] && { printf '%s\n' "$name"; return; }
+        [ -n "$fallback" ] || fallback="$name"
+    done < "$CANDIDATE_FILE"
+    printf '%s\n' "$fallback"
 }
 
 reset_promotion()
@@ -478,8 +491,10 @@ evaluate_once()
         if [ "$active_healthy" = 1 ]; then
             /usr/local/bin/wan3-manager select "$active" 0 "$active_bin" 1 >/dev/null 2>&1 || true
             message="manual selection retained: $active"
-        elif { [ "$active" = none ] || [ "$active" = mesh ]; } && [ -n "$best" ]; then
-            if switch_to "$best" >/dev/null 2>&1; then
+        elif [ "$active" = none ] || [ "$active" = mesh ]; then
+            manual_recovery="$(choose_healthy_candidate "$preferred")"
+            [ -n "$manual_recovery" ] || manual_recovery="$best"
+            if [ -n "$manual_recovery" ] && switch_to "$manual_recovery" >/dev/null 2>&1; then
                 active="$(uci_get active)"
                 new_line="$(read_active_line "$active")"
                 [ -n "$new_line" ] && active_bin="$(printf '%s' "$new_line" | awk -F'|' '{print $4}')" || active_bin=none
