@@ -478,6 +478,17 @@ evaluate_once()
         if [ "$active_healthy" = 1 ]; then
             /usr/local/bin/wan3-manager select "$active" 0 "$active_bin" 1 >/dev/null 2>&1 || true
             message="manual selection retained: $active"
+        elif { [ "$active" = none ] || [ "$active" = mesh ]; } && [ -n "$best" ]; then
+            if switch_to "$best" >/dev/null 2>&1; then
+                active="$(uci_get active)"
+                new_line="$(read_active_line "$active")"
+                [ -n "$new_line" ] && active_bin="$(printf '%s' "$new_line" | awk -F'|' '{print $4}')" || active_bin=none
+                message="manual selection recovered: $active"
+            else
+                /usr/local/bin/wan3-manager withdraw 'Manual selected local WAN failed' 1 >/dev/null 2>&1 || true
+                active="$(uci_get active)"; active_bin=none
+                message='manual selected local WAN failed; local defaults and Babel export withdrawn'
+            fi
         else
             /usr/local/bin/wan3-manager withdraw 'Manual selected local WAN failed' 1 >/dev/null 2>&1 || true
             active="$(uci_get active)"; active_bin=none
