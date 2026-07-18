@@ -4,7 +4,7 @@ const enabled = uciMesh.get("aredn", "multiwan", "enabled") === "1";
 let mode = uciMesh.get("aredn", "multiwan", "selection_mode") || "manual";
 if (mode === "availability" || mode === "adaptive") mode = "automatic";
 const active = uciMesh.get("aredn", "multiwan", "active") || "wan";
-const release = "r24";
+const release = "r25";
 %}
 <div id="multiwan-page" class="pw-page" hx-get="u-multiwan" hx-trigger="every 10s [document.visibilityState === 'visible']" hx-swap="outerHTML">
     <header class="pw-hero">
