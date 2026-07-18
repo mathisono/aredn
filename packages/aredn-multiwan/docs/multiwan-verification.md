@@ -6,7 +6,7 @@
 ./tests/verify.sh
 ```
 
-The verifier checks package boundaries, executable modes, BusyBox shell syntax, r10 metadata/dependencies, administrator-only UI handlers, DSA and swconfig port generation, Wi-Fi WAN ownership, rollback, GPS non-interference, WAN 3 network-only discovery, calibration bounds, routing-table ownership, Babel guards, tunnel isolation, markup, documentation, and repository-sync metadata.
+The verifier checks package boundaries, executable modes, BusyBox shell syntax, metadata/dependencies, administrator-only UI handlers, DSA and swconfig port generation, Wi-Fi WAN ownership, rollback, GPS non-interference, WAN 3 network-only discovery, speed-test bounds, routing-table ownership, Babel guards, tunnel isolation, markup, documentation, and repository-sync metadata.
 
 Static success is not an APK build or physical-node pass.
 
@@ -126,19 +126,20 @@ ip -4 route show table 102
 ip -4 route show table 103
 ```
 
-Each source-bound health/calibration request must stay in its private table. When WAN 1 is Wi-Fi, table 101 must use the same `wlan0`/`wlan1` reported by `network.interface.wan`.
+Each source-bound health or speed-test request must stay in its private table. When WAN 1 is Wi-Fi, table 101 must use the same `wlan0`/`wlan1` reported by `network.interface.wan`.
 
-## 7. Calibration object and bins
+## 7. Speed tests and classes
 
 Save an administrator-selected HTTPS range object. Reject HTTP, credentials, fragments, whitespace, custom ports, missing paths, redirects, non-206, and short responses.
 
 ```sh
-/usr/local/bin/wan-calibrate wan manual
-/usr/local/bin/wan-calibrate wan2 manual
-/usr/local/bin/wan-calibrate wan3 manual   # only when configured
+/usr/local/bin/wan-speed-test route-check wan
+/usr/local/bin/wan-speed-test test wan cloudflare 1000000
+/usr/local/bin/wan-speed-test test wan2 cloudflare 1000000
+/usr/local/bin/wan-speed-test test wan3 cloudflare 1000000   # only when configured
 ```
 
-Confirm 1/8/32 MiB progression, maximum approximately 41 MiB, exact bytes, cooldown, global lock, source/gateway binding, manual/automatic trigger, and low/medium/fast thresholds. Changing Wi-Fi DHCP address or gateway must make the `wan` result stale.
+Confirm route proof, bounded payloads, global lock, source/gateway binding, Cloudflare colo parsing, iperf3 node-name validation, and low/medium/fast thresholds. Changing Wi-Fi DHCP address or gateway must make the `wan` result stale.
 
 ## 8. Adaptive rotation
 

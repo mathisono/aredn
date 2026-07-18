@@ -21,6 +21,7 @@ function candidate(name) { const list = s && s.candidates || []; for (let i = 0;
 function healthClass(c, enabled) { if (!enabled) return "pw-status-off"; if (!c) return "pw-status-unknown"; return c.healthy ? "pw-status-ok" : "pw-status-bad"; }
 function healthText(c, enabled) { if (!enabled) return "Disabled"; if (!c) return "Unknown"; return c.healthy ? "Healthy" : "Down"; }
 function labelPath(value) { return value === "wan" ? "WAN 1" : value === "wan2" ? "WAN 2" : value === "wan3" ? "WAN 3 USB" : value === "mesh" ? "Remote Mesh WAN" : "Unknown"; }
+function labelMode(value) { return value === "automatic" || value === "availability" || value === "adaptive" ? "Automatic" : "Manual"; }
 const s = readPolicyStatus();
 const enabled = uciMesh.get("aredn", "multiwan", "enabled") === "1";
 const active = s && s.active || uciMesh.get("aredn", "multiwan", "active") || "wan";
@@ -41,7 +42,7 @@ const wan2Enabled = uciMesh.get("aredn", "multiwan", "wan2_enable") === "1";
         <div class="pw-label">IPv4</div><div class="pw-value">{{wan1.address || "Absent"}}</div>
         <div class="pw-label">Gateway</div><div class="pw-value">{{wan1.gateway || "Unknown"}}</div>
         <div class="pw-label">Health</div><div class="pw-value">{{c1 && c1.reason || "Not evaluated"}}</div>
-        <div class="pw-label">Speed bin</div><div class="pw-value">{{c1 && c1.bin || "Unknown"}}</div>
+        <div class="pw-label">Speed class</div><div class="pw-value">{{c1 && c1.bin || "Unknown"}}</div>
         <div class="pw-label">Table</div><div class="pw-value">101 private</div>
     </div>
 </section>
@@ -54,7 +55,7 @@ const wan2Enabled = uciMesh.get("aredn", "multiwan", "wan2_enable") === "1";
         <div class="pw-label">IPv4</div><div class="pw-value">{{wan2.address || "Absent"}}</div>
         <div class="pw-label">Gateway</div><div class="pw-value">{{wan2.gateway || "Unknown"}}</div>
         <div class="pw-label">Health</div><div class="pw-value">{{c2 && c2.reason || "Not evaluated"}}</div>
-        <div class="pw-label">Speed bin</div><div class="pw-value">{{c2 && c2.bin || "Unknown"}}</div>
+        <div class="pw-label">Speed class</div><div class="pw-value">{{c2 && c2.bin || "Unknown"}}</div>
         <div class="pw-label">Table</div><div class="pw-value">102 private</div>
     </div>
 </section>
@@ -71,7 +72,7 @@ const wan2Enabled = uciMesh.get("aredn", "multiwan", "wan2_enable") === "1";
 <section id="wan-policy" class="ctrl pw-card pw-card-wide pw-card-clickable" hx-get="status/e/wan-policy" hx-target="#ctrl-modal" hx-swap="innerHTML" tabindex="0" aria-labelledby="pw-policy-title">
     <div class="pw-card-head"><h2 id="pw-policy-title">Route Policy</h2><span class="pw-configure">Configure</span></div>
     <div class="pw-meta-grid">
-        <div class="pw-label">Selection mode</div><div class="pw-value">{{enabled ? uciMesh.get("aredn", "multiwan", "selection_mode") || "manual" : "Disabled"}}</div>
+        <div class="pw-label">Selection mode</div><div class="pw-value">{{enabled ? labelMode(uciMesh.get("aredn", "multiwan", "selection_mode") || "manual") : "Disabled"}}</div>
         <div class="pw-label">Preferred WAN</div><div class="pw-value">{{labelPath(uciMesh.get("aredn", "multiwan", "preferred_wan") || "wan")}}</div>
         <div class="pw-label">Active path</div><div class="pw-value">{{labelPath(active)}} ({{s && s.selected_bin || "unknown"}})</div>
         <div class="pw-label">Tunnel guard</div><div class="pw-value">{{enabled ? "Enabled" : "Idle"}}</div>
@@ -83,4 +84,5 @@ const wan2Enabled = uciMesh.get("aredn", "multiwan", "wan2_enable") === "1";
         <div class="pw-tile"><strong>Table 27</strong><div>{{active !== "mesh" ? "Active local subnet" : "Withdrawn"}}</div></div>
         <div class="pw-tile"><strong>Table 28</strong><div>{{s && s.table28_published ? "Published" : "Not published"}}</div></div>
     </div>
+    <div class="pw-muted">{{s && s.message || "No recent decision is available. Health is independent from throughput."}}</div>
 </section>

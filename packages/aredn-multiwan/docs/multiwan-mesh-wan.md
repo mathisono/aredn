@@ -45,7 +45,7 @@ radio1_mode=wan → wan/wlan1 → table 101
 no Wi-Fi WAN     → wan/br-wan → table 101
 ```
 
-When selected, the same atomic transaction copies the candidate into tables 26 and 27 plus the compatible main default. Table 28 is published only after health and the configured mesh-share bin pass. A DHCP source or gateway change makes the saved `wan` calibration stale.
+When selected, the same atomic transaction copies the candidate into tables 26 and 27 plus the compatible main default. Table 28 is published only after health and the configured mesh-share class pass. A DHCP source or gateway change makes the saved `wan` speed result stale.
 
 The port manager rejects an Ethernet WAN-1 assignment while a radio owns `wan`, and the SLA manager rejects the invalid condition where both radios are configured as WAN clients. AREDN radio mode is never changed by the package.
 
@@ -80,17 +80,17 @@ Each enabled candidate—including Wi-Fi WAN 1—must have:
 - a default route in its private table
 - a successful lightweight path probe
 
-Availability is always decided by route validation, source-bound gateway ICMP, and source-bound HTTPS health fallback. Calibration requests one byte over HTTPS for speed classification only and must not withdraw an otherwise reachable path. A hard interface failure is immediate. The selected path receives the configured application-failure hysteresis, but a standby that fails its current probe is never eligible for promotion.
+Availability is always decided by route validation, source-bound gateway ICMP, and source-bound HTTPS health fallback. Throughput tests are separate, occasional measurements and must not withdraw an otherwise reachable path. A hard interface failure is immediate. The selected path receives the configured application-failure hysteresis, but a standby that fails its current probe is never eligible for promotion.
 
 ### Speed classes
 
-Adaptive mode requires a fresh bounded calibration result:
+Automatic mode uses fresh bounded speed results:
 
 - `low`: 5 Mbps or less
 - `medium`: above 5 through 30 Mbps
 - `fast`: above 30 Mbps
 
-A candidate below `selection_min_bin`, or without a fresh result, is not automatically selected in adaptive mode. The controller also clamps an invalid direct-UCI configuration so `calibration_interval` cannot exceed `result_ttl`; this prevents every speed class from remaining stale between refreshes.
+A candidate below `selection_min_bin`, or without a fresh result, remains healthy but uses class Unknown for automatic ranking. The controller also clamps an invalid direct-UCI configuration so `speed_test_interval` cannot exceed `speed_result_ttl`; this prevents every speed class from remaining stale between refreshes.
 
 ### Rotation and hysteresis
 
@@ -100,7 +100,7 @@ A candidate below `selection_min_bin`, or without a fresh result, is not automat
 4. A non-emergency promotion requires `promote_count` consecutive better observations.
 5. `hold_down` prevents rapid switching after a successful promotion.
 6. If no local WAN qualifies, tables 26, 27 and 28 are withdrawn. Table 22 may then provide the remote Mesh WAN fallback.
-7. An administrator selecting **Use remote Mesh WAN fallback** places the controller in manual mode so the next adaptive pass does not immediately undo that explicit choice.
+7. An administrator selecting **Use remote Mesh WAN fallback** places the controller in manual mode so the next automatic pass does not immediately undo that explicit choice.
 
 ## How AREDN settings combine
 

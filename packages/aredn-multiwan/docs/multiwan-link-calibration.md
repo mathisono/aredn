@@ -1,77 +1,109 @@
-# Link calibration and speed bins
+# Connection speed tests and selection classes
 
-## Administrator-selected object
+## Health is not speed
 
-A logged-in administrator stores a descriptive label and one HTTPS object URL. Nothing is hard-coded. Hurricane Electric/Hayward may be selected when a suitable object is available, but any controlled object meeting the contract may be used.
+PollyWAN health checks decide whether a WAN is usable. They are lightweight:
 
-Accepted shape:
+- interface and source address validation
+- route validation through the WAN private table
+- source-bound gateway ICMP
+- source-bound HTTPS fallback
 
-```text
-https://dns-hostname/path/payload.bin
-```
+Health checks do not download speed-test payloads and do not run iperf3. A failed throughput test records a failure reason but does not withdraw a healthy WAN.
 
-The current implementation rejects non-HTTPS URLs, spaces, fragments, embedded credentials, custom ports, malformed hostnames, and missing paths. The object must:
+## Selection behavior
 
-- have a valid public certificate
-- avoid redirects
-- support byte ranges and return HTTP `206`
-- return the exact requested byte count
-- contain at least 32 MiB
+Operators choose only **Manual** or **Automatic**.
 
-Saving a blank URL disables calibration.
+Manual mode keeps the selected connection while it is healthy. If that connection fails health checks, PollyWAN immediately selects the best healthy fallback. It does not automatically return to the original preferred connection unless the operator chooses it again or explicitly enables the advanced return option.
 
-A run request may select only `wan`, `wan2`, or `wan3`. It cannot contain or override a URL. The runner independently validates persistent UCI before opening a connection.
+Automatic mode ranks only healthy WANs. Fresh speed results classify each path:
 
-## Progressive measurement
+- Low: less than 5 Mbps
+- Medium: 5 through 30 Mbps
+- Fast: greater than 30 Mbps
+- Unknown: no fresh valid result
 
-```text
-1 MiB
-  └─ if approximately >=4 Mbps: 8 MiB
-       └─ if approximately >=25 Mbps: 32 MiB
-```
+The current healthy WAN stays active unless another WAN has a higher class for the required promotion observations. Same-class Mbps differences do not cause flapping. If all classes are Unknown, the preferred healthy connection wins.
 
-Maximum total transfer is approximately 41 MiB.
+Older `availability` and `adaptive` configuration values migrate to `automatic`.
 
-Classification:
+## AREDN node-to-node testing
 
-- low: 5 Mbps or less
-- medium: above 5 through 30 Mbps
-- fast: above 30 Mbps
-
-Results include interface, device, source, gateway, timestamp, bytes, duration, Mbps, bin, remote address, object label/host, manual/automatic trigger, and PdaNet proxy state.
-
-## Manual and automatic triggers
-
-Manual runs require an authenticated administrator. Automatic runs occur only when PollyWAN is explicitly enabled in adaptive mode. A global lock prevents simultaneous runs and a per-interface cooldown defaults to 300 seconds.
-
-Adaptive selection also requires the result to match the candidate's current source/gateway and be younger than `result_ttl`. `calibration_interval` is clamped to not exceed that lifetime.
-
-## WAN binding
-
-Each request is bound to the candidate's source address/private route table:
-
-- WAN 1 → table 101
-- WAN 2 → table 102
-- WAN 3 → table 103
-
-For PdaNet, curl is bound to the WAN 3 USB source and receives the proxy address/port/credentials directly. It does not rely on transparent redirection.
-
-## Validate an object
+The AREDN node test runs reverse iperf3:
 
 ```sh
-curl --fail --max-redirs 0 --range 0-1048575 --output /dev/null \
-  --write-out 'HTTP=%{http_code} bytes=%{size_download}\n' \
-  'https://host.example/path/payload.bin'
+iperf3 -c NODE -p PORT -t DURATION -R -J
 ```
 
-Expected: `HTTP=206 bytes=1048576`.
+The remote node must already run an iperf3 server. The node name is limited to letters, numbers, dots, and dashes before it is used.
 
-## Runtime
+This test measures throughput between two AREDN nodes over the selected path. It may not represent general Internet performance.
+
+Before accepting a result, PollyWAN validates the WAN device, source address, gateway, private table, destination route, JSON throughput, transferred bytes, and active WAN stability.
+
+## Internet-path testing with Cloudflare
+
+The Cloudflare method first reads:
+
+```text
+https://cloudflare.com/cdn-cgi/trace
+```
+
+Then it downloads a bounded payload from:
+
+```text
+https://speed.cloudflare.com/__down?bytes=BYTES
+```
+
+Cloudflare uses Anycast routing. The displayed colo is the edge selected by BGP and ISP peering; it is not guaranteed to be the nearest facility.
+
+Results record WAN, device, source address, public IP, country, Cloudflare colo, bytes, duration, Mbps, class, route proof, and message. WAN1 and WAN2 may share a public IP when they intentionally share an upstream router; route and source proof still decide whether the result is valid.
+
+## Payload and data usage
+
+Manual payload choices:
+
+- 1 MB
+- 5 MB
+- 10 MB
+- 20 MB
+
+Adaptive payload sizing uses the previous valid class:
+
+```text
+low     -> 1 MB
+medium  -> 5 MB
+fast    -> 10 MB
+unknown -> 2 MB
+```
+
+Routine testing defaults to 5 MB. PollyWAN never runs the full browser speed test.
+
+## Result storage
+
+Runtime results live in `/tmp`:
+
+```text
+/tmp/wan-speed/wan.json
+/tmp/wan-speed/wan2.json
+/tmp/wan-speed/wan3.json
+```
+
+Each file contains version, timestamp, WAN, method, validity, Mbps, class, duration, bytes, latency, source, device, gateway, public IP, country, colo, remote node, remote address, route proof, and message.
+
+Failures update `*.status.json` and preserve the last valid `*.json` result.
+
+## CLI
 
 ```sh
-/usr/local/bin/wan-calibrate wan manual
-cat /tmp/wan-calibration/wan.result.json
-logread -e wan-calibrate
+wan-speed-test test wan cloudflare 1000000
+wan-speed-test test wan2 iperf3
+wan-speed-test test-all cloudflare 5000000
+wan-speed-test status wan
+wan-speed-test status-all
+wan-speed-test clear wan
+wan-speed-test route-check wan
 ```
 
-Do not repeatedly calibrate metered links outside the documented test plan.
+Tests run sequentially under one lock. They do not replace the active system default route.

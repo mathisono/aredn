@@ -10,7 +10,7 @@ radio1_mode=wan → wan → wlan1
 no radio in WAN mode → wan → Ethernet br-wan
 ```
 
-PollyWAN therefore treats WAN 1 as **Ethernet or Wi-Fi, never both simultaneously**. The candidate remains `wan`, uses private table 101, and produces calibration state under `/tmp/wan-calibration/wan.*` regardless of transport.
+PollyWAN therefore treats WAN 1 as **Ethernet or Wi-Fi, never both simultaneously**. The candidate remains `wan`, uses private table 101, and records speed-test state under `/tmp/wan-speed/wan.*` regardless of transport.
 
 The package never changes `radio0_mode`, `radio1_mode`, SSID, key, channel, or radio power. It only observes AREDN's configuration. If both radios are set to WAN mode, validation and the SLA controller stop with an error rather than guessing which radio owns WAN 1.
 

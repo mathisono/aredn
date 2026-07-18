@@ -1,7 +1,7 @@
 #!/bin/sh
-# Adaptive AREDN local-WAN selector. Reachability is a hard gate; bounded
-# calibration results provide low/medium/fast classes. A better path must pass
-# promotion hysteresis before it replaces the selected local default.
+# PollyWAN local-WAN selector. Reachability is a hard gate; occasional
+# throughput tests provide low/medium/fast classes. Speed never marks an
+# otherwise healthy path down.
 
 set -u
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
@@ -61,9 +61,9 @@ number_setting()
     printf '%s\n' "$value"
 }
 
-bin_score()
+class_score()
 {
-    case "$1" in low) echo 1 ;; medium) echo 2 ;; fast) echo 3 ;; *) echo 0 ;; esac
+    case "$1" in low) echo 2 ;; medium) echo 3 ;; fast) echo 4 ;; *) echo 1 ;; esac
 }
 
 candidate_enabled()
@@ -215,7 +215,7 @@ failure_count()
 result_values()
 {
     name="$1"; values="$2"; ttl="$3"
-    result="/tmp/wan-calibration/$name.result.json"
+    result="/tmp/wan-speed/$name.json"
     [ -r "$result" ] || return 1
     old_ifs="$IFS"; IFS='|'; set -- $values; IFS="$old_ifs"
     source="$2"; gateway="${3:-}"
@@ -223,9 +223,11 @@ result_values()
     timestamp="$(jsonfilter -i "$result" -e '@.timestamp' 2>/dev/null || true)"
     result_source="$(jsonfilter -i "$result" -e '@.source' 2>/dev/null || true)"
     result_gateway="$(jsonfilter -i "$result" -e '@.gateway' 2>/dev/null || true)"
-    bin="$(jsonfilter -i "$result" -e '@.bin' 2>/dev/null || true)"
+    valid="$(jsonfilter -i "$result" -e '@.valid' 2>/dev/null || true)"
+    bin="$(jsonfilter -i "$result" -e '@.class' 2>/dev/null || true)"
     mbps="$(jsonfilter -i "$result" -e '@.mbps' 2>/dev/null || true)"
     valid_uint "$timestamp" || return 1
+    case "$valid" in true|1) ;; *) return 1 ;; esac
     case "$bin" in low|medium|fast) ;; *) return 1 ;; esac
     [ "$result_source" = "$source" ] || return 1
     if [ "$result_gateway" != '-' ] && [ -n "$gateway" ] && [ "$result_gateway" != "$gateway" ]; then return 1; fi
@@ -238,13 +240,15 @@ result_values()
 maybe_calibrate()
 {
     name="$1"; interval="$2"
-    calibration_configured || return 0
-    result="/tmp/wan-calibration/$name.result.json"
+    [ "$(uci_get speed_test_auto)" = 1 ] || return 0
+    [ -e /tmp/wan-speed/.lock ] && return 0
+    [ -e /tmp/wan-port-manager/pending-token ] && return 0
+    result="/tmp/wan-speed/$name.json"
     timestamp="$(jsonfilter -i "$result" -e '@.timestamp' 2>/dev/null || true)"
     valid_uint "$timestamp" || timestamp=0
     now="$(date +%s)"; age=$((now - timestamp))
     [ "$age" -ge "$interval" ] || return 0
-    /usr/local/bin/wan-calibrate "$name" automatic >/dev/null 2>&1 || true
+    /usr/local/bin/wan-speed-test test "$name" cloudflare "$(uci_get speed_test_payload)" >/dev/null 2>&1 || true
 }
 
 evaluate_candidate()
@@ -286,22 +290,20 @@ evaluate_candidate()
         fi
     fi
 
-    if [ "$probe_ok" = 1 ] && [ "$mode" = adaptive ]; then maybe_calibrate "$name" "$calibration_interval"; fi
+    if [ "$probe_ok" = 1 ] && [ "$mode" = automatic ]; then maybe_calibrate "$name" "$calibration_interval"; fi
 
     result="$(result_values "$name" "$values" "$result_ttl" 2>/dev/null || true)"
     if [ -n "$result" ]; then
         old_ifs="$IFS"; IFS='|'; set -- $result; IFS="$old_ifs"
-        bin="$1"; mbps="$2"; age="$4"; raw_score="$(bin_score "$bin")"
+        bin="$1"; mbps="$2"; age="$4"; raw_score="$(class_score "$bin")"
         printf '%s\n' "$mbps" | awk 'BEGIN { ok = 0 } /^[0-9]+([.][0-9]+)?$/ { ok = 1 } END { exit !ok }' || mbps=0
     else
-        bin=unknown; mbps=0; age=0; raw_score=0
+        bin=unknown; mbps=0; age=0; raw_score=1
     fi
 
     score=0
     if [ "$healthy" = 1 ]; then
-        if [ "$mode" = availability ]; then
-            score=1
-        elif [ "$mode" = adaptive ] && [ "$raw_score" -ge "$min_score" ]; then
+        if [ "$mode" = automatic ] && [ "$raw_score" -ge "$min_score" ]; then
             score="$raw_score"
         fi
     fi
@@ -430,7 +432,8 @@ evaluate_once()
     /usr/local/bin/wan-tunnel-guard apply >/dev/null 2>&1 || true
     : > "$CANDIDATE_FILE"
 
-    mode="$(uci_get selection_mode)"; case "$mode" in manual|availability|adaptive) ;; *) mode=manual ;; esac
+    mode="$(uci_get selection_mode)"
+    case "$mode" in availability|adaptive) mode=automatic; uci -c /etc/config.mesh -q set "$CONFIG_PACKAGE.$CONFIG_SECTION.selection_mode=automatic"; uci -c /etc/config.mesh -q commit "$CONFIG_PACKAGE" ;; manual|automatic) ;; *) mode=manual ;; esac
     if [ "$(uci_get enabled)" != 1 ]; then
         if package_has_effects; then
             /usr/local/bin/wan-port-manager disable >/dev/null 2>&1 || true
@@ -459,10 +462,10 @@ evaluate_once()
     /usr/local/bin/wan-route-cache all >/dev/null 2>&1 || true
 
     preferred="$(uci_get preferred_wan)"; case "$preferred" in wan|wan2|wan3) ;; *) preferred=wan ;; esac
-    minimum="$(uci_get selection_min_bin)"; case "$minimum" in low|medium|fast) ;; *) minimum=low ;; esac
-    min_score="$(bin_score "$minimum")"
-    result_ttl="$(number_setting result_ttl 28800 300 86400)"
-    calibration_interval="$(number_setting calibration_interval 21600 300 86400)"
+    minimum="$(uci_get selection_min_bin)"; case "$minimum" in low|medium|fast) ;; *) minimum=unknown ;; esac
+    min_score="$(class_score "$minimum")"
+    result_ttl="$(number_setting speed_result_ttl 21600 900 86400)"
+    calibration_interval="$(number_setting speed_test_interval 21600 900 86400)"
     # Never let a configured refresh interval exceed result lifetime; direct
     # UCI edits must not create a long window with every class stale.
     [ "$calibration_interval" -le "$result_ttl" ] || calibration_interval="$result_ttl"
@@ -491,23 +494,18 @@ evaluate_once()
         if [ "$active_healthy" = 1 ]; then
             /usr/local/bin/wan3-manager select "$active" 0 "$active_bin" 1 >/dev/null 2>&1 || true
             message="manual selection retained: $active"
-        elif [ "$active" = none ] || [ "$active" = mesh ]; then
+        else
             manual_recovery="$(choose_healthy_candidate "$preferred")"
-            [ -n "$manual_recovery" ] || manual_recovery="$best"
             if [ -n "$manual_recovery" ] && switch_to "$manual_recovery" >/dev/null 2>&1; then
                 active="$(uci_get active)"
                 new_line="$(read_active_line "$active")"
                 [ -n "$new_line" ] && active_bin="$(printf '%s' "$new_line" | awk -F'|' '{print $4}')" || active_bin=none
-                message="manual selection recovered: $active"
+                message="manual selected WAN failed; selected healthy fallback $active"
             else
                 /usr/local/bin/wan3-manager withdraw 'Manual selected local WAN failed' 1 >/dev/null 2>&1 || true
                 active="$(uci_get active)"; active_bin=none
                 message='manual selected local WAN failed; local defaults and Babel export withdrawn'
             fi
-        else
-            /usr/local/bin/wan3-manager withdraw 'Manual selected local WAN failed' 1 >/dev/null 2>&1 || true
-            active="$(uci_get active)"; active_bin=none
-            message='manual selected local WAN failed; local defaults and Babel export withdrawn'
         fi
         reset_promotion
     elif [ -z "$best" ]; then
@@ -536,7 +534,7 @@ evaluate_once()
         target_score="$5"
         should_promote=0
         if [ "$target_score" -gt "$active_score" ]; then should_promote=1; fi
-        if [ "$target_score" -eq "$active_score" ] && [ "$best" = "$preferred" ]; then should_promote=1; fi
+        if [ "$target_score" -eq "$active_score" ] && [ "$target_score" -eq 1 ] && [ "$best" = "$preferred" ]; then should_promote=1; fi
         last_switch="$(cat "$SWITCH_FILE" 2>/dev/null || true)"; valid_uint "$last_switch" || last_switch=0
         now="$(date +%s)"
         if [ "$should_promote" = 1 ] && [ $((now - last_switch)) -ge "$hold_down" ]; then

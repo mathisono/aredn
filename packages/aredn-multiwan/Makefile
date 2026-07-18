@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=aredn-multiwan
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=21
+PKG_RELEASE:=22
 PKG_LICENSE:=GPL-3.0-only
 PKG_MAINTAINER:=AREDN contributors
 PKGARCH:=all
@@ -25,7 +25,7 @@ define Package/aredn-multiwan/description
  existing AREDN Wi-Fi client logical interface, assigns WAN 2 to Ethernet,
  keeps WAN 3 fixed to a phone USB RNDIS/CDC tether, supports hAP-side PdaNet
  HTTP CONNECT proxy settings, regulates the three local links using health and
- bounded speed bins, synchronizes AREDN routing tables 26/27/28, preserves
+ bounded speed classes, synchronizes AREDN routing tables 26/27/28, preserves
  table 22 as the remote Mesh WAN fallback, prevents unqualified Babel default
  advertisement, and hard-blocks tunnel ingress from Internet defaults.
  Installation is disabled and inert until an administrator explicitly enables it.
@@ -79,6 +79,7 @@ define Package/aredn-multiwan/install
 	$(INSTALL_BIN) ./files/usr/local/bin/wan-sla $(1)/usr/local/bin/
 	$(INSTALL_BIN) ./files/usr/local/bin/wan-tunnel-guard $(1)/usr/local/bin/
 	$(INSTALL_BIN) ./files/usr/local/bin/wan-calibrate $(1)/usr/local/bin/
+	$(INSTALL_BIN) ./files/usr/local/bin/wan-speed-test $(1)/usr/local/bin/
 
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/wan3-manager $(1)/etc/init.d/

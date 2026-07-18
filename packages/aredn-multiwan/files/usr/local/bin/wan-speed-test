@@ -1,0 +1,166 @@
+#!/bin/sh
+# PollyWAN bounded throughput tests. Health is handled by wan-sla; this command
+# records occasional speed measurements without changing system defaults.
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+STATE_DIR=/tmp/wan-speed
+LOCK_DIR="$STATE_DIR/.lock"
+CONFIG_PACKAGE=aredn
+CONFIG_SECTION=multiwan
+mkdir -p "$STATE_DIR" || exit 1
+
+json_string() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s/\n/\\n/g'; }
+uci_get() { uci -c /etc/config.mesh -q get "$CONFIG_PACKAGE.$CONFIG_SECTION.$1" 2>/dev/null || true; }
+now_epoch() { date +%s; }
+now_text() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+valid_uint() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+valid_ipv4() { printf '%s\n' "$1" | awk -F. 'NF != 4 { bad = 1 } { for (i = 1; i <= 4; i++) if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) bad = 1 } END { exit bad }'; }
+valid_node() { case "$1" in ''|.*|*.|*..*|*[!A-Za-z0-9.-]*) return 1 ;; esac; [ "${#1}" -le 253 ] || return 1; }
+valid_port() { valid_uint "$1" && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
+valid_duration() { valid_uint "$1" && [ "$1" -ge 3 ] && [ "$1" -le 60 ]; }
+
+wan_table() { case "$1" in wan) echo 101 ;; wan2) echo 102 ;; wan3) echo 103 ;; *) return 1 ;; esac; }
+enabled_wan()
+{
+    case "$1" in
+        wan) [ "$(uci_get wan_enable)" != 0 ] ;;
+        wan2) [ "$(uci_get wan2_enable)" = 1 ] ;;
+        wan3) [ "$(uci_get wan3_enable)" = 1 ] ;;
+        *) return 1 ;;
+    esac
+}
+class_for_mbps()
+{
+    value="$1"; low="$(uci_get speed_threshold_low)"; fast="$(uci_get speed_threshold_fast)"
+    valid_uint "$low" || low=5; valid_uint "$fast" || fast=30
+    awk -v v="$value" -v low="$low" -v fast="$fast" 'BEGIN { if (v <= 0) print "unknown"; else if (v < low) print "low"; else if (v <= fast) print "medium"; else print "fast" }'
+}
+payload_for()
+{
+    case "${1:-}" in 1000000|5000000|10000000|20000000) echo "$1"; return ;; esac
+    prev="$(jsonfilter -i "$STATE_DIR/$WAN.json" -e '@.class' 2>/dev/null || true)"
+    case "$prev" in low) echo 1000000 ;; medium) echo 5000000 ;; fast) echo 10000000 ;; *) echo 2000000 ;; esac
+}
+inspect_wan()
+{
+    WAN="$1"; case "$WAN" in wan|wan2|wan3) ;; *) echo "Invalid WAN" >&2; return 2 ;; esac
+    enabled_wan "$WAN" || { echo "WAN is disabled" >&2; return 3; }
+    values="$(/usr/local/bin/wan3-manager inspect "$WAN" 2>/dev/null || true)"
+    [ -n "$values" ] || { echo "WAN has no inspectable route state" >&2; return 4; }
+    old_ifs="$IFS"; IFS='|'; set -- $values; IFS="$old_ifs"
+    DEVICE="$1"; SOURCE="$2"; GATEWAY="${3:-}"; NETWORK="${4:-}"; TABLE="$(wan_table "$WAN")"
+    case "$DEVICE" in ''|*[!A-Za-z0-9_.:-]*) echo "Invalid device" >&2; return 4 ;; esac
+    valid_ipv4 "$SOURCE" || { echo "Invalid source address" >&2; return 4; }
+}
+route_check_dest()
+{
+    dest="$1"; inspect_wan "$WAN" || return $?
+    valid_ipv4 "$dest" || { echo "Invalid destination" >&2; return 5; }
+    private="$(ip -4 route show table "$TABLE" default 2>/dev/null | head -n 1 || true)"
+    [ -n "$private" ] || { echo "No private default route in table $TABLE" >&2; return 6; }
+    printf '%s\n' "$private" | grep -q "dev $DEVICE" || { echo "Private table $TABLE does not use $DEVICE" >&2; return 6; }
+    if valid_ipv4 "$GATEWAY"; then printf '%s\n' "$private" | grep -q "via $GATEWAY" || { echo "Private table $TABLE gateway changed" >&2; return 6; }; fi
+    route="$(ip -4 route get "$dest" from "$SOURCE" oif "$DEVICE" 2>/dev/null || true)"
+    [ -n "$route" ] || { echo "Destination route lookup failed" >&2; return 7; }
+    printf '%s\n' "$route" | grep -q "dev $DEVICE" || { echo "Destination route uses another device" >&2; return 7; }
+    printf '%s\n' "$route" | grep -Eq "(src|from) $SOURCE( |$)" || { echo "Destination route uses another source" >&2; return 7; }
+    ROUTE_PROOF="$route"
+}
+resolve_host()
+{
+    host="$1"
+    addr="$(getent hosts "$host" 2>/dev/null | awk '$1 ~ /^[0-9.]+$/ { print $1; exit }' || true)"
+    [ -n "$addr" ] || addr="$(nslookup "$host" 2>/dev/null | awk '/^Address [0-9]*: / { print $3; exit } /^Address: / { print $2; exit }' || true)"
+    valid_ipv4 "$addr" || return 1
+    printf '%s\n' "$addr"
+}
+write_failure()
+{
+    WAN="$1"; method="$2"; message="$3"; tmp="$STATE_DIR/$WAN.status.json.tmp.$$"
+    printf '{"version":1,"timestamp":%s,"time":"%s","wan":"%s","method":"%s","valid":false,"class":"unknown","message":"%s"}\n' \
+        "$(now_epoch)" "$(now_text)" "$(json_string "$WAN")" "$(json_string "$method")" "$(json_string "$message")" > "$tmp" && mv "$tmp" "$STATE_DIR/$WAN.status.json"
+}
+write_result()
+{
+    tmp="$STATE_DIR/$WAN.json.tmp.$$"
+    printf '{"version":1,"timestamp":%s,"time":"%s","wan":"%s","method":"%s","valid":true,"mbps":%s,"class":"%s","duration":%s,"bytes":%s,"latency":%s,"source":"%s","device":"%s","gateway":"%s","public_ip":"%s","country":"%s","colo":"%s","remote_node":"%s","remote_address":"%s","path":"%s","message":"%s"}\n' \
+        "$TIMESTAMP" "$TIME_TEXT" "$(json_string "$WAN")" "$(json_string "$METHOD")" "$MBPS" "$(json_string "$CLASS")" "$DURATION" "$BYTES" "$LATENCY" \
+        "$(json_string "$SOURCE")" "$(json_string "$DEVICE")" "$(json_string "$GATEWAY")" "$(json_string "$PUBLIC_IP")" "$(json_string "$COUNTRY")" "$(json_string "$COLO")" \
+        "$(json_string "$REMOTE_NODE")" "$(json_string "$REMOTE_ADDRESS")" "$(json_string "$ROUTE_PROOF")" "$(json_string "$MESSAGE")" > "$tmp" || return 1
+    mv "$tmp" "$STATE_DIR/$WAN.json" || return 1
+    cp "$STATE_DIR/$WAN.json" "$STATE_DIR/$WAN.status.json" 2>/dev/null || true
+}
+acquire_lock()
+{
+    if mkdir "$LOCK_DIR" 2>/dev/null; then printf '%s\n' "$$" > "$LOCK_DIR/pid"; return 0; fi
+    oldpid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+    case "$oldpid" in ''|*[!0-9]*) ;; *) kill -0 "$oldpid" 2>/dev/null && return 1 ;; esac
+    rm -rf "$LOCK_DIR"; mkdir "$LOCK_DIR" 2>/dev/null || return 1; printf '%s\n' "$$" > "$LOCK_DIR/pid"
+}
+
+cloudflare_test()
+{
+    WAN="$1"; REQUEST_BYTES="$(payload_for "${2:-}")"; METHOD=cloudflare; TRACE_URL='https://cloudflare.com/cdn-cgi/trace'; DOWN_URL="https://speed.cloudflare.com/__down?bytes=$REQUEST_BYTES"
+    REMOTE_ADDRESS="$(resolve_host cloudflare.com)" || { write_failure "$WAN" "$METHOD" "Cloudflare trace host did not resolve"; return 1; }
+    if ! route_check_dest "$REMOTE_ADDRESS" 2>"$STATE_DIR/$WAN.route.err.$$"; then msg="$(cat "$STATE_DIR/$WAN.route.err.$$" 2>/dev/null)"; rm -f "$STATE_DIR/$WAN.route.err.$$"; write_failure "$WAN" "$METHOD" "${msg:-route check failed}"; return 1; fi
+    rm -f "$STATE_DIR/$WAN.route.err.$$"; before_active="$(uci_get active)"
+    set -- --interface "$SOURCE" --silent --show-error --fail --proto '=https' --proto-redir '=https' --max-redirs 0 --connect-timeout 5 --max-time 30 --write-out '\nhttp_code=%{http_code}\ntime_total=%{time_total}\nremote_ip=%{remote_ip}\n'
+    if [ "$WAN" = wan3 ] && [ "$(uci_get wan3_proxy_enable)" = 1 ]; then proxy_host="$(uci_get wan3_proxy_host)"; proxy_port="$(uci_get wan3_proxy_port)"; [ -n "$proxy_host" ] || proxy_host=192.168.49.1; [ -n "$proxy_port" ] || proxy_port=8000; set -- "$@" --proxy "http://$proxy_host:$proxy_port" --noproxy ''; else set -- "$@" --proxy ''; fi
+    trace="$(curl "$@" "$TRACE_URL" 2>"$STATE_DIR/$WAN.curl.err.$$")" || { err="$(cat "$STATE_DIR/$WAN.curl.err.$$" 2>/dev/null | tr '\n' ' ' | cut -c1-160)"; rm -f "$STATE_DIR/$WAN.curl.err.$$"; write_failure "$WAN" "$METHOD" "Cloudflare trace failed: $err"; return 1; }
+    rm -f "$STATE_DIR/$WAN.curl.err.$$"
+    PUBLIC_IP="$(printf '%s\n' "$trace" | awk -F= '$1 == "ip" { print $2; exit }')"; COUNTRY="$(printf '%s\n' "$trace" | awk -F= '$1 == "loc" { print $2; exit }')"; COLO="$(printf '%s\n' "$trace" | awk -F= '$1 == "colo" { print $2; exit }')"
+    valid_ipv4 "$PUBLIC_IP" || { write_failure "$WAN" "$METHOD" "Cloudflare trace did not report a public IP"; return 1; }
+    case "$COLO" in ???) ;; *) write_failure "$WAN" "$METHOD" "Cloudflare trace did not report a colo"; return 1 ;; esac
+    expected="$(uci_get "expected_public_ip_$WAN")"; if [ -n "$expected" ] && [ "$expected" != "$PUBLIC_IP" ]; then write_failure "$WAN" "$METHOD" "Public IP did not match expected value"; return 1; fi
+    out="$STATE_DIR/$WAN.download.$$"; timing="$(curl "$@" --output "$out" "$DOWN_URL" 2>"$STATE_DIR/$WAN.curl.err.$$")" || { err="$(cat "$STATE_DIR/$WAN.curl.err.$$" 2>/dev/null | tr '\n' ' ' | cut -c1-160)"; rm -f "$out" "$STATE_DIR/$WAN.curl.err.$$"; write_failure "$WAN" "$METHOD" "Cloudflare download failed: $err"; return 1; }
+    rm -f "$STATE_DIR/$WAN.curl.err.$$"; bytes="$(wc -c < "$out" | tr -d ' ')"; rm -f "$out"
+    [ "$bytes" -ge "$((REQUEST_BYTES * 98 / 100))" ] || { write_failure "$WAN" "$METHOD" "Cloudflare download returned too few bytes"; return 1; }
+    DURATION="$(printf '%s\n' "$timing" | awk -F= '$1 == "time_total" { print $2; exit }')"; http_code="$(printf '%s\n' "$timing" | awk -F= '$1 == "http_code" { print $2; exit }')"
+    [ "$http_code" = 200 ] || { write_failure "$WAN" "$METHOD" "Cloudflare download returned HTTP $http_code"; return 1; }
+    awk -v d="$DURATION" 'BEGIN { exit !(d >= 0.05) }' || { write_failure "$WAN" "$METHOD" "Cloudflare download duration was too short"; return 1; }
+    [ "$(uci_get active)" = "$before_active" ] || { write_failure "$WAN" "$METHOD" "Active WAN changed during test"; return 1; }
+    MBPS="$(awk -v b="$bytes" -v d="$DURATION" 'BEGIN { if (d <= 0) exit 1; printf "%.2f", (b * 8.0) / d / 1000000.0 }')" || { write_failure "$WAN" "$METHOD" "Measured Mbps was not numeric"; return 1; }
+    CLASS="$(class_for_mbps "$MBPS")"; TIMESTAMP="$(now_epoch)"; TIME_TEXT="$(now_text)"; BYTES="$bytes"; LATENCY=0; REMOTE_NODE=""; MESSAGE="Cloudflare Anycast Internet path measured"; write_result
+}
+
+iperf_test()
+{
+    WAN="$1"; METHOD=iperf3; REMOTE_NODE="$(uci_get speed_node)"; PORT="$(uci_get speed_iperf_port)"; DURATION="$(uci_get speed_iperf_duration)"
+    valid_node "$REMOTE_NODE" || { write_failure "$WAN" "$METHOD" "Remote AREDN node name is invalid"; return 1; }; valid_port "$PORT" || PORT=5201; valid_duration "$DURATION" || DURATION=10
+    REMOTE_ADDRESS="$(resolve_host "$REMOTE_NODE")" || { write_failure "$WAN" "$METHOD" "Remote AREDN node did not resolve"; return 1; }
+    if ! route_check_dest "$REMOTE_ADDRESS" 2>"$STATE_DIR/$WAN.route.err.$$"; then msg="$(cat "$STATE_DIR/$WAN.route.err.$$" 2>/dev/null)"; rm -f "$STATE_DIR/$WAN.route.err.$$"; write_failure "$WAN" "$METHOD" "${msg:-route check failed}"; return 1; fi
+    rm -f "$STATE_DIR/$WAN.route.err.$$"; before_active="$(uci_get active)"; json_file="$STATE_DIR/$WAN.iperf3.$$"
+    iperf3 -c "$REMOTE_NODE" -p "$PORT" -t "$DURATION" -R -J > "$json_file" 2>"$STATE_DIR/$WAN.iperf3.err.$$" || { err="$(cat "$STATE_DIR/$WAN.iperf3.err.$$" 2>/dev/null | tr '\n' ' ' | cut -c1-160)"; rm -f "$json_file" "$STATE_DIR/$WAN.iperf3.err.$$"; write_failure "$WAN" "$METHOD" "iperf3 failed: $err"; return 1; }
+    rm -f "$STATE_DIR/$WAN.iperf3.err.$$"; bps="$(jsonfilter -i "$json_file" -e '@.end.sum_received.bits_per_second' 2>/dev/null || true)"; bytes="$(jsonfilter -i "$json_file" -e '@.end.sum_received.bytes' 2>/dev/null || true)"
+    [ -n "$bps" ] || bps="$(jsonfilter -i "$json_file" -e '@.end.sum_sent.bits_per_second' 2>/dev/null || true)"; [ -n "$bytes" ] || bytes="$(jsonfilter -i "$json_file" -e '@.end.sum_sent.bytes' 2>/dev/null || true)"; rm -f "$json_file"
+    awk -v b="$bps" 'BEGIN { exit !(b > 0) }' || { write_failure "$WAN" "$METHOD" "iperf3 JSON did not contain positive throughput"; return 1; }
+    valid_uint "${bytes%%.*}" && [ "${bytes%%.*}" -gt 0 ] || { write_failure "$WAN" "$METHOD" "iperf3 transferred zero bytes"; return 1; }
+    [ "$(uci_get active)" = "$before_active" ] || { write_failure "$WAN" "$METHOD" "Active WAN changed during test"; return 1; }
+    MBPS="$(awk -v b="$bps" 'BEGIN { printf "%.2f", b / 1000000.0 }')"; CLASS="$(class_for_mbps "$MBPS")"; TIMESTAMP="$(now_epoch)"; TIME_TEXT="$(now_text)"; BYTES="${bytes%%.*}"; LATENCY=0; PUBLIC_IP=""; COUNTRY=""; COLO=""; MESSAGE="AREDN node-to-node reverse iperf3 path measured"; write_result
+}
+
+status_one()
+{
+    WAN="$1"
+    if [ -r "$STATE_DIR/$WAN.status.json" ]; then cat "$STATE_DIR/$WAN.status.json"; elif [ -r "$STATE_DIR/$WAN.json" ]; then cat "$STATE_DIR/$WAN.json"; else printf '{"version":1,"wan":"%s","valid":false,"class":"unknown","message":"Not tested"}\n' "$(json_string "$WAN")"; fi
+}
+
+command="${1:-status-all}"; WAN="${2:-}"
+case "$command" in
+    test)
+        case "$WAN" in wan|wan2|wan3) ;; *) echo "usage: $0 test {wan|wan2|wan3} [cloudflare|iperf3] [bytes]" >&2; exit 2 ;; esac
+        acquire_lock || { write_failure "$WAN" busy "Another throughput test is active"; exit 3; }; trap 'rm -rf "$LOCK_DIR"' EXIT HUP INT TERM
+        method="${3:-$(uci_get speed_test_method)}"; [ -n "$method" ] || method=cloudflare
+        case "$method" in cloudflare|internet) cloudflare_test "$WAN" "${4:-}" ;; iperf3|node) iperf_test "$WAN" ;; *) write_failure "$WAN" "$method" "Unknown throughput method"; exit 2 ;; esac ;;
+    test-all)
+        acquire_lock || { echo "Another throughput test is active" >&2; exit 3; }; trap 'rm -rf "$LOCK_DIR"' EXIT HUP INT TERM; rc=0; method="${2:-$(uci_get speed_test_method)}"; [ -n "$method" ] || method=cloudflare
+        for WAN in wan wan2 wan3; do enabled_wan "$WAN" || { write_failure "$WAN" "$method" "Disabled"; continue; }; case "$method" in cloudflare|internet) cloudflare_test "$WAN" "${3:-}" || rc=1 ;; iperf3|node) iperf_test "$WAN" || rc=1 ;; *) rc=2 ;; esac; done; exit "$rc" ;;
+    status) case "$WAN" in wan|wan2|wan3) status_one "$WAN" ;; *) exit 2 ;; esac ;;
+    status-all) printf '['; first=1; for WAN in wan wan2 wan3; do [ "$first" = 1 ] || printf ','; first=0; status_one "$WAN"; done; printf ']\n' ;;
+    clear) case "$WAN" in wan|wan2|wan3) rm -f "$STATE_DIR/$WAN.json" "$STATE_DIR/$WAN.status.json" ;; *) exit 2 ;; esac ;;
+    route-check) case "$WAN" in wan|wan2|wan3) ;; *) exit 2 ;; esac; dest="${3:-1.1.1.1}"; route_check_dest "$dest"; printf '{"wan":"%s","table":%s,"device":"%s","source":"%s","gateway":"%s","destination":"%s","path":"%s"}\n' "$(json_string "$WAN")" "$TABLE" "$(json_string "$DEVICE")" "$(json_string "$SOURCE")" "$(json_string "$GATEWAY")" "$(json_string "$dest")" "$(json_string "$ROUTE_PROOF")" ;;
+    *) echo "usage: $0 {test|test-all|status|status-all|clear|route-check}" >&2; exit 2 ;;
+esac

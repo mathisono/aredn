@@ -214,6 +214,54 @@
   margin-top: .8rem;
 }
 .pollywan-dialog .pw-spacer { flex: 1 1 auto; }
+.pollywan-dialog .pw-method-grid {
+  display: grid;
+  gap: .7rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: .75rem;
+}
+.pollywan-dialog .pw-method {
+  border: 1px solid var(--pw-border, rgba(127,127,127,.35));
+  border-radius: 7px;
+  display: grid;
+  gap: .35rem;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: .7rem;
+}
+.pollywan-dialog .pw-method span {
+  color: var(--pw-muted, rgba(127,127,127,.9));
+  grid-column: 2;
+}
+.pollywan-dialog .pw-field {
+  flex: 0 1 18rem;
+  min-width: 0;
+}
+.pollywan-dialog .pw-inline {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+  justify-content: flex-end;
+}
+.pollywan-dialog .pw-result {
+  flex: 0 1 13rem;
+  min-width: 0;
+  text-align: right;
+}
+.pollywan-dialog .pw-actions-tight {
+  flex: 0 1 auto;
+  gap: .4rem;
+  margin-top: 0;
+}
+.pollywan-dialog .pw-advanced {
+  border-top: 1px solid var(--pw-border, rgba(127,127,127,.35));
+  margin-top: .7rem;
+  padding-top: .7rem;
+}
+.pollywan-dialog .pw-advanced summary {
+  cursor: pointer;
+  min-height: 2.2rem;
+}
 @media (max-width: 900px) {
   #multiwan-page .pw-card-main,
   #multiwan-page .pw-card-wide { grid-column: span 6; }
@@ -235,7 +283,10 @@
   #multiwan-page .pw-wan3-grid { grid-template-columns: 1fr; }
   #multiwan-page .pw-meta-grid { grid-template-columns: 1fr; }
   .pollywan-dialog .pw-form-row { grid-template-columns: 1fr; }
+  .pollywan-dialog .pw-method-grid { grid-template-columns: 1fr; }
   .pollywan-dialog .pw-control { justify-self: stretch; }
+  .pollywan-dialog .pw-inline,
+  .pollywan-dialog .pw-result { justify-content: stretch; text-align: left; }
   .pollywan-dialog .pw-control > *,
   .pollywan-dialog button { min-height: 2.5rem; }
   .pollywan-dialog select,

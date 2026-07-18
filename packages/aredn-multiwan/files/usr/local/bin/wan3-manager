@@ -284,9 +284,11 @@ interface_values()
 result_bin()
 {
     name="$1"
-    result="/tmp/wan-calibration/$name.result.json"
+    result="/tmp/wan-speed/$name.json"
     [ -r "$result" ] || { echo unknown; return; }
-    bin="$(jsonfilter -i "$result" -e '@.bin' 2>/dev/null || true)"
+    valid="$(jsonfilter -i "$result" -e '@.valid' 2>/dev/null || true)"
+    case "$valid" in true|1) ;; *) echo unknown; return ;; esac
+    bin="$(jsonfilter -i "$result" -e '@.class' 2>/dev/null || true)"
     case "$bin" in low|medium|fast) echo "$bin" ;; *) echo unknown ;; esac
 }
 
@@ -301,7 +303,7 @@ candidate_devices()
 
 candidate_probe_sources()
 {
-    # Bound WAN 1/2 health and calibration probes must bypass the active wan3
+    # Bound WAN 1/2 health and speed probes must bypass the active wan3
     # transparent proxy. wan3 probes explicitly use the configured phone proxy.
     for name in wan wan2; do
         status="$(ubus call "network.interface.$name" status 2>/dev/null || true)"

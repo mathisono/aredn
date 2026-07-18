@@ -1,18 +1,18 @@
 {%
-function readResult(name) { const v = fs.readfile(`/tmp/wan-calibration/${name}.result.json`); if (!v) return null; try { return json(v); } catch (_) { return null; } }
-const host = uciMesh.get("aredn", "multiwan", "calibration_host") || "";
-const names = [ { name: "wan", label: "WAN 1" }, { name: "wan2", label: "WAN 2" }, { name: "wan3", label: "WAN 3 USB" } ];
+function readResult(name) { const v = fs.readfile(`/tmp/wan-speed/${name}.status.json`) || fs.readfile(`/tmp/wan-speed/${name}.json`); if (!v) return null; try { return json(v); } catch (_) { return null; } }
+function labelClass(c) { return c === "fast" ? "Fast" : c === "medium" ? "Medium" : c === "low" ? "Low" : "Unknown"; }
+const names = [ { name: "wan", label: "WAN 1" }, { name: "wan2", label: "WAN 2" }, { name: "wan3", label: "USB WAN" } ];
 %}
 <section id="link-calibration" class="ctrl pw-card pw-card-wide pw-card-clickable" hx-get="status/e/link-calibration" hx-target="#ctrl-modal" hx-swap="innerHTML" tabindex="0" aria-labelledby="pw-cal-title">
-    <div class="pw-card-head"><h2 id="pw-cal-title">Link Calibration</h2><span class="pw-configure">Configure</span></div>
-    <div class="pw-muted">{{host || "No HTTPS calibration object configured"}}</div>
+    <div class="pw-card-head"><h2 id="pw-cal-title">Connection speed test</h2><span class="pw-configure">Configure</span></div>
+    <div class="pw-muted">Health is checked continuously. Throughput is measured only when requested or on the optional slow schedule.</div>
     <div class="pw-cal-grid">
         {% for (let i = 0; i < length(names); i++) { const item = names[i]; const r = readResult(item.name); %}
         <div class="pw-tile">
             <strong>{{item.label}}</strong>
-            <div>{{r ? sprintf("%.1f Mbps", r.mbps) : "Not calibrated"}}</div>
-            <div class="pw-muted">{{r && r.bin || "No bin"}}</div>
-            <div class="pw-muted">{{r && r.time || "No result age"}}</div>
+            <div>{{r && r.valid ? labelClass(r.class) : r && r.message ? "Failed" : "Not tested"}}</div>
+            <div class="pw-muted">{{r && r.valid ? sprintf("%.1f Mbps", r.mbps) : (r && r.message || "No recent measurement")}}</div>
+            <div class="pw-muted">{{r && r.valid ? ((r.colo || r.remote_node || "") + " " + (r.public_ip || "")) : "Unknown class"}}</div>
         </div>
         {% } %}
     </div>

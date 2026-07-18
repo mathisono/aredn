@@ -31,6 +31,17 @@ set_default failure_count 2
 set_default promote_count 2
 set_default hold_down 120
 set_default result_ttl 28800
+set_default speed_result_ttl 21600
+set_default speed_test_auto 0
+set_default speed_test_interval 21600
+set_default speed_test_payload 5000000
+set_default speed_test_method cloudflare
+set_default speed_node ''
+set_default speed_iperf_port 5201
+set_default speed_iperf_duration 10
+set_default speed_threshold_low 5
+set_default speed_threshold_fast 30
+set_default return_to_preferred 0
 set_default calibration_interval 21600
 
 # Ethernet role management is a second explicit opt-in. WAN3 is fixed to USB.
@@ -55,18 +66,14 @@ set_default wan3_proxy_username ''
 set_default wan3_proxy_password ''
 set_default wan3_proxy_local_port 12346
 
-set_default calibration_provider 'User-selected HTTPS calibration object'
-set_default calibration_host ''
-set_default calibration_url ''
-set_default calibration_cooldown 300
+# Present only Manual and Automatic while preserving old values on upgrade.
+case "$($UCI -q get aredn.multiwan.selection_mode 2>/dev/null)" in
+    availability|adaptive) $UCI set aredn.multiwan.selection_mode='automatic' ;;
+esac
 
 # Migrate known development defaults without changing custom values.
 if [ "$($UCI -q get aredn.multiwan.wan3_proxy_local_port 2>/dev/null)" = 12345 ]; then
     $UCI set aredn.multiwan.wan3_proxy_local_port='12346'
-fi
-if [ -z "$($UCI -q get aredn.multiwan.calibration_url 2>/dev/null)" ] && \
-   [ "$($UCI -q get aredn.multiwan.calibration_provider 2>/dev/null)" = 'Hurricane Electric / Hayward Internet Exchange' ]; then
-    $UCI set aredn.multiwan.calibration_provider='User-selected HTTPS calibration object'
 fi
 
 $UCI commit aredn
