@@ -9,7 +9,12 @@ function bounded(value, fallback, minimum, maximum) { const n = int(value || fal
 function validNode(value) { return value === "" || match(value, /^[A-Za-z0-9.-]{1,253}$/); }
 function wanLabel(name) { return name === "wan" ? "WAN 1" : name === "wan2" ? "WAN 2" : "USB WAN"; }
 function payloadLabel(bytes) { return bytes === "1000000" ? "1 MB" : bytes === "5000000" ? "5 MB" : bytes === "10000000" ? "10 MB" : bytes === "20000000" ? "20 MB" : "Adaptive"; }
-function resultFor(name) { return readJson(`/tmp/wan-speed/${name}.status.json`) || readJson(`/tmp/wan-speed/${name}.json`); }
+function resultFor(name)
+{
+    const last = readJson(`/tmp/wan-speed/${name}.json`);
+    if (last && last.valid === true) return last;
+    return readJson(`/tmp/wan-speed/${name}.status.json`) || last;
+}
 function stateText(item, enabled, ttl)
 {
     if (!enabled) return "Disabled";

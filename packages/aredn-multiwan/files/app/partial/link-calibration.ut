@@ -1,5 +1,12 @@
 {%
-function readResult(name) { const v = fs.readfile(`/tmp/wan-speed/${name}.status.json`) || fs.readfile(`/tmp/wan-speed/${name}.json`); if (!v) return null; try { return json(v); } catch (_) { return null; } }
+function readResult(name)
+{
+    const last = fs.readfile(`/tmp/wan-speed/${name}.json`);
+    if (last) { try { const parsed = json(last); if (parsed && parsed.valid === true) return parsed; } catch (_) {} }
+    const status = fs.readfile(`/tmp/wan-speed/${name}.status.json`);
+    if (!status) return null;
+    try { return json(status); } catch (_) { return null; }
+}
 function labelClass(c) { return c === "fast" ? "Fast" : c === "medium" ? "Medium" : c === "low" ? "Low" : "Unknown"; }
 const names = [ { name: "wan", label: "WAN 1" }, { name: "wan2", label: "WAN 2" }, { name: "wan3", label: "USB WAN" } ];
 %}
