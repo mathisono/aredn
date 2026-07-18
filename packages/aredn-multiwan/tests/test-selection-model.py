@@ -79,6 +79,11 @@ def main() -> None:
         "mesh",
         "wan2",
     ) == "wan2"
+    assert automatic_choice(
+        [Candidate("wan", speed_class="unknown"), Candidate("wan2", speed_class="unknown")],
+        "wan",
+        "wan",
+    ) == "wan"
     assert Candidate("wan", healthy=True, fresh=False, speed_class="fast").score == CLASS_SCORE["unknown"]
     assert Candidate("wan", healthy=True, fresh=True, speed_class="unknown").score == CLASS_SCORE["unknown"]
 

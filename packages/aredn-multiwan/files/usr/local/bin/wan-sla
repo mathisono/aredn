@@ -303,7 +303,7 @@ evaluate_candidate()
 
     score=0
     if [ "$healthy" = 1 ]; then
-        if [ "$mode" = automatic ] && [ "$raw_score" -ge "$min_score" ]; then
+        if [ "$mode" = automatic ] && { [ "$raw_score" -eq 1 ] || [ "$raw_score" -ge "$min_score" ]; }; then
             score="$raw_score"
         fi
     fi
