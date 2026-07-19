@@ -23,7 +23,7 @@ PollyWAN is experimental and is not an official AREDN release.
 - MikroTik hAP ac2
 - MikroTik hAP ac3
 
-The current package release is `0.1.0-r25`.
+The current package release is `0.1.0-r26`.
 
 ## Local candidates
 
@@ -36,7 +36,7 @@ Wi-Fi WAN and Ethernet WAN 1 are mutually exclusive because AREDN gives both the
 
 ## Install From GitHub Release
 
-Download the `aredn-multiwan-0.1.0-r25.apk` asset from the latest GitHub release:
+Download the `aredn-multiwan-0.1.0-r26.apk` asset from the latest GitHub release:
 
 ```text
 https://github.com/mathisono/AREDN_PollyWAN/releases
@@ -45,9 +45,9 @@ https://github.com/mathisono/AREDN_PollyWAN/releases
 Copy the APK to the AREDN node, then install it from an SSH session:
 
 ```sh
-scp aredn-multiwan-0.1.0-r25.apk root@NODE:/tmp/
+scp aredn-multiwan-0.1.0-r26.apk root@NODE:/tmp/
 ssh root@NODE
-apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0-r25.apk
+apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0-r26.apk
 /etc/init.d/wan3-manager restart
 /etc/init.d/uhttpd restart
 ```
@@ -221,7 +221,7 @@ Then run:
 ./tests/verify.sh
 make -C openwrt package/aredn-multiwan/clean V=s
 make -C openwrt package/aredn-multiwan/compile V=s
-find openwrt/bin -name 'aredn-multiwan-0.1.0-r25.apk' -print -exec sha256sum {} \;
+find openwrt/bin -name 'aredn-multiwan-0.1.0-r26.apk' -print -exec sha256sum {} \;
 ```
 
 A successful static verifier is not a substitute for the package build, exact kernel-ABI dependency check, disabled-install GPS test, port rollback test, or physical hAP validation described in [docs/multiwan-verification.md](docs/multiwan-verification.md).

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Static and disposable-mock verification for the standalone PollyWAN r25 source.
+# Static and disposable-mock verification for the standalone PollyWAN r26 source.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
@@ -80,7 +80,7 @@ done
 # Package metadata and optional-only target contract.
 require_text Makefile 'PKG_NAME:=aredn-multiwan'
 require_text Makefile 'PKG_VERSION:=0.1.0'
-require_text Makefile 'PKG_RELEASE:=25'
+require_text Makefile 'PKG_RELEASE:=26'
 require_text Makefile 'URL:=https://github.com/mathisono/AREDN_PollyWAN'
 require_text Makefile '+ip-tiny'
 require_text Makefile '+redsocks'
@@ -333,19 +333,19 @@ require_text docs/multiwan-mesh-wan.md 'protocol-`boot`'
 require_text docs/multiwan-verification.md 'Disabled-install, radio, and GPS test'
 require_text docs/multiwan-verification.md 'Wi-Fi WAN ownership'
 require_text tools/openclaw-build-test-prompt.md 'mse-88/hub5'
-require_text tools/openclaw-build-test-prompt.md 'agent/pollywan-r6'
+require_text tools/openclaw-build-test-prompt.md 'main'
 require_text tools/openclaw-build-test-prompt.md 'Wi-Fi client'
 [ "$(wc -c < tools/openclaw-build-test-prompt.md)" -lt 2000 ] || fail 'OpenClaw prompt exceeds 2000 characters'
-require_text SYNC_SOURCE 'standalone_branch=agent/pollywan-r6'
+require_text SYNC_SOURCE 'standalone_branch=main'
 require_text SYNC_SOURCE 'integration_branch=agent/pollywan-r6'
 require_text SYNC_SOURCE 'sync_contract=standalone-root-equals-integration-subtree'
 require_text tools/sync-integration.sh 'rsync -rnic --delete --exclude .git'
 
-# No obsolete/broken bootstrap or r5 release claims.
-if grep -RIn --exclude-dir=.git --exclude=SYNC_SOURCE --exclude=verify.sh -E 'source\.tar\.gz\.b64|chunk-0[0-9]|PKG_RELEASE:=5|PollyWAN r5|0\.1\.0-r5' . >/tmp/pollywan-stale.$$; then
+# No obsolete/broken bootstrap or older release claims.
+if grep -RIn --exclude-dir=.git --exclude=SYNC_SOURCE --exclude=verify.sh -E 'source\.tar\.gz\.b64|chunk-0[0-9]|PKG_RELEASE:=(3|5|6|10|16|25)|PollyWAN r(3|5|6|10|16|25)|0\.1\.0-r(3|5|6|10|16|25)|main contains r3|incomplete source' . >/tmp/pollywan-stale.$$; then
     cat /tmp/pollywan-stale.$$ >&2
     rm -f /tmp/pollywan-stale.$$
-    fail 'stale r5/bootstrap references remain'
+    fail 'stale release/bootstrap references remain'
 fi
 rm -f /tmp/pollywan-stale.$$
 
@@ -420,8 +420,9 @@ for line in style.splitlines():
         continue
     if '{' in stripped and not stripped.startswith('@'):
         raise SystemExit('PollyWAN CSS contains an unscoped selector')
-if '/etc/init.d/aredn-multiwan' in ''.join(p.read_text(errors='ignore') for p in root.rglob('*') if p.is_file() and '.git' not in p.parts and str(p) != 'tests/verify.sh'):
-    raise SystemExit('obsolete /etc/init.d/aredn-multiwan reference remains')
+obsolete_init = '/etc/init.d/' + 'aredn-' + 'multiwan'
+if obsolete_init in ''.join(p.read_text(errors='ignore') for p in root.rglob('*') if p.is_file() and '.git' not in p.parts and str(p) != 'tests/verify.sh'):
+    raise SystemExit('obsolete init-script reference remains')
 print('markup/template balance passed')
 PY
 
@@ -432,4 +433,4 @@ require_text files/usr/local/bin/wan3-manager 'function cidr_prefix'
 require_text files/usr/local/bin/wan-route-cache 'function cidr_prefix'
 require_text files/usr/local/bin/wan-route-cache 'connected_prefix_from_cidr "$cidr"'
 
-echo 'PollyWAN r25 static and mock verification passed'
+echo 'PollyWAN r26 static and mock verification passed'
