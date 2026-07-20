@@ -97,7 +97,9 @@ cleanup_old_proxy_state()
         wan3_proxy_local_port
     do
         $UCI -q delete "aredn.multiwan.$option" >/dev/null 2>&1 || true
+        uci -q delete "aredn.multiwan.$option" >/dev/null 2>&1 || true
     done
+    uci commit aredn >/dev/null 2>&1 || true
 }
 
 # Present only Manual and Automatic while preserving old values on upgrade.
