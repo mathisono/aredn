@@ -34,33 +34,95 @@ The current package release is `0.1.0-r27`.
 
 Wi-Fi WAN and Ethernet WAN 1 are mutually exclusive because AREDN gives both the same logical interface name, `wan`. PollyWAN never changes a radio mode; it observes AREDN's existing configuration and prevents an Ethernet WAN-1 assignment while Wi-Fi owns `wan`.
 
-## Install From GitHub Release
+## Install From a GitHub Release
 
-Download the `aredn-multiwan-0.1.0-r27.apk` asset from the latest GitHub release:
+Download the APK for the matching PollyWAN release from:
 
 ```text
 https://github.com/mathisono/AREDN_PollyWAN/releases
 ```
 
-Copy the APK to the AREDN node, then install it from an SSH session:
+Use a package built for the AREDN/OpenWrt version and target installed on the node. Keep a working LAN or mesh management path available during installation and setup.
+
+### Recommended: install through the AREDN web interface
+
+1. Download `aredn-multiwan-0.1.0-r27.apk` to your computer.
+2. Log in to the AREDN node as an administrator.
+3. Open **Packages**.
+4. Under **Upload Package**, choose the PollyWAN APK.
+5. Select **Fetch and Install**.
+6. Wait for **Package installed** before closing the dialog.
+7. Refresh the browser and open `http://NODE/a/multiwan`.
+
+The AREDN package screen installs the uploaded APK and uses the node's configured AREDN repositories to obtain any missing declared dependencies. Most dependencies are already present in the normal AREDN firmware. AREDN also includes `iperf3`, so no separate iperf package is normally required.
+
+Release r27 declares `ca-bundle`, `curl`, `jshn`, and `jsonfilter`. `libc` is provided by the base system. It does not declare `ip-tiny`, `redsocks`, `libevent2-core7`, `nftables-json`, or `kmod-nft-nat`.
+
+PollyWAN remains disabled after installation. Installing the APK alone does not reload networking or apply Ethernet port roles.
+
+If the PollyWAN page does not appear after refreshing, restart only the web interface from SSH:
 
 ```sh
-scp aredn-multiwan-0.1.0-r27.apk root@NODE:/tmp/
-ssh root@NODE
-apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0-r27.apk
-/etc/init.d/wan3-manager restart
 /etc/init.d/uhttpd restart
 ```
 
-Replace `NODE` with the node hostname or IP address. The install should add the PollyWAN UI without changing the active network configuration. Restarting `uhttpd` reloads AREDN's cached UI templates.
+### SSH installation alternative
 
-After installation, open:
+```sh
+ssh root@NODE
+cd /tmp
+
+VERSION='0.1.0-r27'
+TAG="v${VERSION}"
+APK="aredn-multiwan-${VERSION}.apk"
+
+curl -fL --retry 3 \
+  -o "$APK" \
+  "https://github.com/mathisono/AREDN_PollyWAN/releases/download/${TAG}/${APK}"
+
+sha256sum "$APK"
+apk add --simulate --allow-untrusted "$APK"
+apk add --allow-untrusted "$APK"
+/etc/init.d/uhttpd restart
+```
+
+Compare the SHA-256 value with the checksum published for the release when one is provided.
+
+### Offline installation
+
+When the node cannot reach its AREDN package repositories, copy the PollyWAN APK and every missing dependency APK to the node. All files must come from the same AREDN/OpenWrt release, target architecture, repository set, and kernel ABI.
+
+```sh
+apk add --simulate --allow-untrusted /tmp/pollywan-install/*.apk
+apk add --allow-untrusted /tmp/pollywan-install/*.apk
+/etc/init.d/uhttpd restart
+```
+
+Never force-install a replacement `kernel-*` package or a `kmod-*` package built for another AREDN firmware release.
+
+### Upgrade
+
+Use the same AREDN **Packages** → **Upload Package** process and select the newer APK. A normal upgrade preserves the PollyWAN UCI configuration and confirmed Ethernet-port roles. Refresh the browser afterward; restart `uhttpd` only when the updated page does not appear.
+
+### Verify
+
+```sh
+apk info -e aredn-multiwan
+command -v iperf3
+/usr/local/bin/wan-port-manager status
+/usr/local/bin/wan3-manager status
+/usr/local/bin/wan-sla status
+```
+
+The expected iperf3 path is `/usr/bin/iperf3`.
+
+The PollyWAN page is available at:
 
 ```text
 http://NODE/a/multiwan
 ```
 
-The page is also reachable from the package app entry:
+It is also reachable through:
 
 ```text
 http://NODE/cgi-bin/apps/aredn-multiwan/admin
