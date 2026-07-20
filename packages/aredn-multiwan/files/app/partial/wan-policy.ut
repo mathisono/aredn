@@ -20,7 +20,7 @@ function ifaceState(name)
 function candidate(name) { const list = s && s.candidates || []; for (let i = 0; i < length(list); i++) if (list[i].name === name) return list[i]; return null; }
 function healthClass(c, enabled) { if (!enabled) return "pw-status-off"; if (!c) return "pw-status-unknown"; return c.healthy ? "pw-status-ok" : "pw-status-bad"; }
 function healthText(c, enabled) { if (!enabled) return "Disabled"; if (!c) return "Unknown"; return c.healthy ? "Healthy" : "Down"; }
-function labelPath(value) { return value === "wan" ? "WAN 1" : value === "wan2" ? "WAN 2" : value === "wan3" ? "WAN 3 USB" : value === "mesh" ? "Remote Mesh WAN" : "Unknown"; }
+function labelPath(value) { return value === "wan" ? "WAN 1" : value === "wan2" ? "WAN 2" : value === "wan3" ? "Android USB tether" : value === "mesh" ? "Remote Mesh WAN" : "Unknown"; }
 function labelMode(value) { return value === "automatic" || value === "availability" || value === "adaptive" ? "Automatic" : "Manual"; }
 const s = readPolicyStatus();
 const enabled = uciMesh.get("aredn", "multiwan", "enabled") === "1";

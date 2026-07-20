@@ -107,8 +107,7 @@ cloudflare_test()
     REMOTE_ADDRESS="$(resolve_host cloudflare.com)" || { write_failure "$WAN" "$METHOD" "Cloudflare trace host did not resolve"; return 1; }
     if ! route_check_dest "$REMOTE_ADDRESS" 2>"$STATE_DIR/$WAN.route.err.$$"; then msg="$(cat "$STATE_DIR/$WAN.route.err.$$" 2>/dev/null)"; rm -f "$STATE_DIR/$WAN.route.err.$$"; write_failure "$WAN" "$METHOD" "${msg:-route check failed}"; return 1; fi
     rm -f "$STATE_DIR/$WAN.route.err.$$"; before_active="$(uci_get active)"
-    set -- --interface "$SOURCE" --silent --show-error --fail --proto '=https' --proto-redir '=https' --max-redirs 0 --connect-timeout 5 --max-time 30 --write-out '\nhttp_code=%{http_code}\ntime_total=%{time_total}\nremote_ip=%{remote_ip}\n'
-    if [ "$WAN" = wan3 ] && [ "$(uci_get wan3_proxy_enable)" = 1 ]; then proxy_host="$(uci_get wan3_proxy_host)"; proxy_port="$(uci_get wan3_proxy_port)"; [ -n "$proxy_host" ] || proxy_host=192.168.49.1; [ -n "$proxy_port" ] || proxy_port=8000; set -- "$@" --proxy "http://$proxy_host:$proxy_port" --noproxy ''; else set -- "$@" --proxy ''; fi
+    set -- --interface "$SOURCE" --proxy '' --silent --show-error --fail --proto '=https' --proto-redir '=https' --max-redirs 0 --connect-timeout 5 --max-time 30 --write-out '\nhttp_code=%{http_code}\ntime_total=%{time_total}\nremote_ip=%{remote_ip}\n'
     trace="$(curl "$@" "$TRACE_URL" 2>"$STATE_DIR/$WAN.curl.err.$$")" || { err="$(cat "$STATE_DIR/$WAN.curl.err.$$" 2>/dev/null | tr '\n' ' ' | cut -c1-160)"; rm -f "$STATE_DIR/$WAN.curl.err.$$"; write_failure "$WAN" "$METHOD" "Cloudflare trace failed: $err"; return 1; }
     rm -f "$STATE_DIR/$WAN.curl.err.$$"
     PUBLIC_IP="$(printf '%s\n' "$trace" | awk -F= '$1 == "ip" { print $2; exit }')"; COUNTRY="$(printf '%s\n' "$trace" | awk -F= '$1 == "loc" { print $2; exit }')"; COLO="$(printf '%s\n' "$trace" | awk -F= '$1 == "colo" { print $2; exit }')"

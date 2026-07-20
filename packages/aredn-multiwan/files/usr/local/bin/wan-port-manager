@@ -444,7 +444,6 @@ regenerate_network()
 {
     mkdir -p /tmp/wan-sla
     touch /tmp/wan-sla/inhibit
-    /usr/local/bin/wan3-manager proxy-stop >/dev/null 2>&1 || true
     /usr/local/bin/node-setup >/dev/null 2>&1 || return 1
     /etc/init.d/network reload >/dev/null 2>&1 || return 1
     [ "${POLLYWAN_TEST_MODE:-0}" = 1 ] || sleep 3
@@ -526,7 +525,6 @@ restore_roles()
     mkdir -p /tmp/wan-sla
     touch /tmp/wan-sla/inhibit
     cancel_timer
-    /usr/local/bin/wan3-manager proxy-stop >/dev/null 2>&1 || true
     restore_backups || return 1
     rm -f "$MARKER"
     /usr/local/bin/node-setup >/dev/null 2>&1 || return 1
@@ -537,7 +535,6 @@ restore_roles()
     uci -c /etc/config.mesh set "$CONFIG_PACKAGE.$CONFIG_SECTION.port_roles_enabled=0"
     uci -c /etc/config.mesh set "$CONFIG_PACKAGE.$CONFIG_SECTION.wan2_enable=0"
     uci -c /etc/config.mesh set "$CONFIG_PACKAGE.$CONFIG_SECTION.wan3_enable=0"
-    uci -c /etc/config.mesh set "$CONFIG_PACKAGE.$CONFIG_SECTION.wan3_proxy_enable=0"
     uci -c /etc/config.mesh commit "$CONFIG_PACKAGE"
     rm -f /tmp/wan-sla/inhibit
     rm -rf "$BACKUP_DIR"

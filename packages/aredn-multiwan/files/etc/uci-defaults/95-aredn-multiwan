@@ -59,22 +59,53 @@ set_default port4_dtd 0
 set_default port5_dtd 1
 
 set_default wan3_device auto
-set_default wan3_proxy_enable 1
-set_default wan3_proxy_host 192.168.49.1
-set_default wan3_proxy_port 8000
-set_default wan3_proxy_username ''
-set_default wan3_proxy_password ''
-set_default wan3_proxy_local_port 12346
+
+cleanup_old_proxy_state()
+{
+    old_pid_file=/var/run/wan3-redsocks.pid
+    if [ -r "$old_pid_file" ]; then
+        old_pid="$(cat "$old_pid_file" 2>/dev/null || true)"
+        case "$old_pid" in
+            ''|*[!0-9]*) ;;
+            *)
+                old_cmd="$(tr '\0' ' ' < "/proc/$old_pid/cmdline" 2>/dev/null || true)"
+                case "$old_cmd" in
+                    *redsocks*'/tmp/wan3/redsocks.conf'*|*redsocks*'wan3-redsocks.pid'*)
+                        kill "$old_pid" >/dev/null 2>&1 || true
+                        ;;
+                esac
+                ;;
+        esac
+    fi
+
+    command -v nft >/dev/null 2>&1 && nft delete table inet aredn_wan3_proxy >/dev/null 2>&1 || true
+    rm -f /var/run/wan3-redsocks.pid \
+        /tmp/wan3/redsocks.conf \
+        /tmp/wan3/proxy.nft \
+        /tmp/wan3/proxy.hash
+
+    uci -q delete firewall.aredn_multiwan_proxy_wifi >/dev/null 2>&1 || true
+    uci -q delete firewall.aredn_multiwan_proxy_dtd >/dev/null 2>&1 || true
+    uci commit firewall >/dev/null 2>&1 || true
+
+    for option in \
+        wan3_proxy_enable \
+        wan3_proxy_host \
+        wan3_proxy_port \
+        wan3_proxy_username \
+        wan3_proxy_password \
+        wan3_proxy_local_port
+    do
+        $UCI -q delete "aredn.multiwan.$option" >/dev/null 2>&1 || true
+    done
+}
 
 # Present only Manual and Automatic while preserving old values on upgrade.
 case "$($UCI -q get aredn.multiwan.selection_mode 2>/dev/null)" in
     availability|adaptive) $UCI set aredn.multiwan.selection_mode='automatic' ;;
 esac
 
-# Migrate known development defaults without changing custom values.
-if [ "$($UCI -q get aredn.multiwan.wan3_proxy_local_port 2>/dev/null)" = 12345 ]; then
-    $UCI set aredn.multiwan.wan3_proxy_local_port='12346'
-fi
+cleanup_old_proxy_state
 
 $UCI commit aredn
 exit 0

@@ -7,7 +7,7 @@ function readJson(path) { const v = fs.readfile(path); if (!v) return null; try 
 function allowed(value, values, fallback) { for (let i = 0; i < length(values); i++) if (value === values[i]) return value; return fallback; }
 function bounded(value, fallback, minimum, maximum) { const n = int(value || fallback); return n >= minimum && n <= maximum ? n : fallback; }
 function validNode(value) { return value === "" || match(value, /^[A-Za-z0-9.-]{1,253}$/); }
-function wanLabel(name) { return name === "wan" ? "WAN 1" : name === "wan2" ? "WAN 2" : "USB WAN"; }
+function wanLabel(name) { return name === "wan" ? "WAN 1" : name === "wan2" ? "WAN 2" : "Android USB tether"; }
 function payloadLabel(bytes) { return bytes === "1000000" ? "1 MB" : bytes === "5000000" ? "5 MB" : bytes === "10000000" ? "10 MB" : bytes === "20000000" ? "20 MB" : "Adaptive"; }
 function resultFor(name)
 {
@@ -28,7 +28,7 @@ function stateText(item, enabled, ttl)
     if (item.message && index(item.message, "route") >= 0) return "No route";
     return item.message ? "Failed" : "Not tested";
 }
-const interfaces = [ { name: "wan", label: "WAN 1", enabled: uciMesh.get("aredn", "multiwan", "wan_enable") !== "0" }, { name: "wan2", label: "WAN 2", enabled: uciMesh.get("aredn", "multiwan", "wan2_enable") === "1" }, { name: "wan3", label: "USB WAN", enabled: uciMesh.get("aredn", "multiwan", "wan3_enable") === "1" } ];
+const interfaces = [ { name: "wan", label: "WAN 1", enabled: uciMesh.get("aredn", "multiwan", "wan_enable") !== "0" }, { name: "wan2", label: "WAN 2", enabled: uciMesh.get("aredn", "multiwan", "wan2_enable") === "1" }, { name: "wan3", label: "Android USB tether", enabled: uciMesh.get("aredn", "multiwan", "wan3_enable") === "1" } ];
 let method = uciMesh.get("aredn", "multiwan", "speed_test_method") || "cloudflare";
 let payload = uciMesh.get("aredn", "multiwan", "speed_test_payload") || "5000000";
 let ttl = bounded(uciMesh.get("aredn", "multiwan", "speed_result_ttl"), 21600, 900, 86400);

@@ -1,6 +1,6 @@
 #!/bin/sh
-# Manage the selected local WAN, AREDN policy tables, USB wan3, PdaNet proxy,
-# and safe withdrawal to a remote Mesh WAN when no local path is eligible.
+# Manage the selected local WAN, AREDN policy tables, USB wan3, and safe
+# withdrawal to a remote Mesh WAN when no local path is eligible.
 
 set -u
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
@@ -9,11 +9,6 @@ export PATH LC_ALL=C
 STATE_DIR=/tmp/wan3
 STATE_FILE="$STATE_DIR/state.json"
 LAN_RULE_FILE="$STATE_DIR/lan-rule-device"
-REDSOCKS_CONF="$STATE_DIR/redsocks.conf"
-REDSOCKS_PID=/var/run/wan3-redsocks.pid
-PROXY_NFT="$STATE_DIR/proxy.nft"
-PROXY_HASH="$STATE_DIR/proxy.hash"
-NFT_TABLE=aredn_wan3_proxy
 MANAGER_LOCK="$STATE_DIR/.manager.lock"
 CONFIG_PACKAGE=aredn
 CONFIG_SECTION=multiwan
@@ -50,11 +45,6 @@ json_escape()
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s/\n/\\n/g'
 }
 
-conf_escape()
-{
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/[\r\n]//g'
-}
-
 valid_device()
 {
     case "$1" in ''|*[!A-Za-z0-9_.:-]*) return 1 ;; *) return 0 ;; esac
@@ -87,12 +77,6 @@ connected_prefix_from_cidr()
             printf "%d.%d.%d.%d/%d\n", o1, o2, o3, o4, $5
         }
     '
-}
-
-valid_port()
-{
-    case "$1" in ''|*[!0-9]*) return 1 ;; esac
-    [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
 }
 
 wan_transport_valid()
@@ -301,17 +285,6 @@ candidate_devices()
     done | sort -u
 }
 
-candidate_probe_sources()
-{
-    # Bound WAN 1/2 health and speed probes must bypass the active wan3
-    # transparent proxy. wan3 probes explicitly use the configured phone proxy.
-    for name in wan wan2; do
-        status="$(ubus call "network.interface.$name" status 2>/dev/null || true)"
-        source="$(printf '%s' "$status" | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null || true)"
-        valid_ipv4 "$source" && printf '%s\n' "$source"
-    done | sort -u
-}
-
 remove_all_main_defaults()
 {
     while ip -4 route del table main default >/dev/null 2>&1; do :; done
@@ -368,200 +341,6 @@ remove_policy_rules()
         fi
     fi
     rm -f "$LAN_RULE_FILE"
-}
-
-proxy_firewall_matches()
-{
-    mode="$1"; port="${2:-12346}"; share_mesh="${3:-0}"
-    wifi_type="$(uci -q get firewall.aredn_multiwan_proxy_wifi 2>/dev/null || true)"
-    wifi_src="$(uci -q get firewall.aredn_multiwan_proxy_wifi.src 2>/dev/null || true)"
-    wifi_port="$(uci -q get firewall.aredn_multiwan_proxy_wifi.dest_port 2>/dev/null || true)"
-    wifi_target="$(uci -q get firewall.aredn_multiwan_proxy_wifi.target 2>/dev/null || true)"
-    dtd_type="$(uci -q get firewall.aredn_multiwan_proxy_dtd 2>/dev/null || true)"
-    dtd_src="$(uci -q get firewall.aredn_multiwan_proxy_dtd.src 2>/dev/null || true)"
-    dtd_port="$(uci -q get firewall.aredn_multiwan_proxy_dtd.dest_port 2>/dev/null || true)"
-    dtd_target="$(uci -q get firewall.aredn_multiwan_proxy_dtd.target 2>/dev/null || true)"
-
-    if [ "$mode" = enable ] && [ "$share_mesh" = 1 ]; then
-        [ "$wifi_type" = rule ] && [ "$wifi_src" = wifi ] && [ "$wifi_port" = "$port" ] && [ "$wifi_target" = ACCEPT ] && \
-        [ "$dtd_type" = rule ] && [ "$dtd_src" = dtdlink ] && [ "$dtd_port" = "$port" ] && [ "$dtd_target" = ACCEPT ]
-    else
-        [ -z "$wifi_type$wifi_src$wifi_port$wifi_target$dtd_type$dtd_src$dtd_port$dtd_target" ]
-    fi
-}
-
-proxy_firewall()
-{
-    mode="$1"; port="${2:-12346}"; share_mesh="${3:-0}"
-    proxy_firewall_matches "$mode" "$port" "$share_mesh" && return 0
-
-    for section in aredn_multiwan_proxy_wifi aredn_multiwan_proxy_dtd; do
-        uci -q delete "firewall.$section" >/dev/null 2>&1 || true
-    done
-    if [ "$mode" = enable ] && [ "$share_mesh" = 1 ]; then
-        uci set firewall.aredn_multiwan_proxy_wifi='rule'
-        uci set firewall.aredn_multiwan_proxy_wifi.name='AREDN Multi-WAN PdaNet proxy from RF mesh'
-        uci set firewall.aredn_multiwan_proxy_wifi.src='wifi'
-        uci set firewall.aredn_multiwan_proxy_wifi.proto='tcp'
-        uci set firewall.aredn_multiwan_proxy_wifi.dest_port="$port"
-        uci set firewall.aredn_multiwan_proxy_wifi.target='ACCEPT'
-
-        uci set firewall.aredn_multiwan_proxy_dtd='rule'
-        uci set firewall.aredn_multiwan_proxy_dtd.name='AREDN Multi-WAN PdaNet proxy from DtD/xlink'
-        uci set firewall.aredn_multiwan_proxy_dtd.src='dtdlink'
-        uci set firewall.aredn_multiwan_proxy_dtd.proto='tcp'
-        uci set firewall.aredn_multiwan_proxy_dtd.dest_port="$port"
-        uci set firewall.aredn_multiwan_proxy_dtd.target='ACCEPT'
-    fi
-    uci commit firewall
-    /etc/init.d/firewall reload >/dev/null 2>&1 || true
-}
-
-stop_proxy()
-{
-    skip_firewall="${1:-0}"
-    nft delete table inet "$NFT_TABLE" >/dev/null 2>&1 || true
-    if [ -r "$REDSOCKS_PID" ]; then
-        pid="$(cat "$REDSOCKS_PID" 2>/dev/null || true)"
-        case "$pid" in ''|*[!0-9]*) ;; *) kill "$pid" >/dev/null 2>&1 || true; sleep 1 ;; esac
-        rm -f "$REDSOCKS_PID"
-    fi
-    rm -f "$PROXY_HASH"
-    [ "$skip_firewall" = 1 ] || proxy_firewall disable
-}
-
-add_ingress_device()
-{
-    file="$1"; dev="$2"
-    valid_device "$dev" || return 0
-    [ -e "/sys/class/net/$dev" ] || return 0
-    grep -Fx "$dev" "$file" >/dev/null 2>&1 || printf '%s\n' "$dev" >> "$file"
-}
-
-collect_proxy_ingress()
-{
-    file="$1"; share_mesh="${2:-0}"
-    : > "$file"
-    add_ingress_device "$file" "$(logical_device lan || true)"
-
-    # Only RF/DtD/xlink mesh traffic is eligible for sharing. Tunnel interfaces
-    # are intentionally absent and are independently blackholed before defaults.
-    if [ "$share_mesh" = 1 ]; then
-        add_ingress_device "$file" "$(logical_device wifi || true)"
-        add_ingress_device "$file" "$(logical_device dtdlink || true)"
-        [ -e /sys/class/net/br-wifi ] && add_ingress_device "$file" br-wifi
-        [ -e /sys/class/net/br-dtdlink ] && add_ingress_device "$file" br-dtdlink
-        uci -q show network | sed -n "s/^network\.\(xlink[^.=]*\)=interface$/\1/p" | while IFS= read -r xlink; do
-            add_ingress_device "$file" "$(logical_device "$xlink" || true)"
-        done
-    fi
-}
-
-start_proxy()
-{
-    wan_device="$1"; share_mesh="${2:-0}"
-    [ "$(uci_get enabled)" = 1 ] || { stop_proxy; return 1; }
-    [ "$(uci_get wan3_proxy_enable)" = 1 ] || { stop_proxy; return 1; }
-    valid_device "$wan_device" || return 1
-    command -v redsocks >/dev/null 2>&1 || return 1
-
-    proxy_host="$(uci_get wan3_proxy_host)"
-    proxy_port="$(uci_get wan3_proxy_port)"
-    proxy_user="$(uci_get wan3_proxy_username)"
-    proxy_pass="$(uci_get wan3_proxy_password)"
-    local_port="$(uci_get wan3_proxy_local_port)"
-    [ -n "$proxy_host" ] || proxy_host=192.168.49.1
-    [ -n "$proxy_port" ] || proxy_port=8000
-    [ -n "$local_port" ] || local_port=12346
-    valid_ipv4 "$proxy_host" || return 1
-    valid_port "$proxy_port" || return 1
-    valid_port "$local_port" || return 1
-
-    ingress="$STATE_DIR/proxy-ingress.$$"
-    conf_new="$STATE_DIR/redsocks.conf.$$"
-    nft_new="$STATE_DIR/proxy.nft.$$"
-    collect_proxy_ingress "$ingress" "$share_mesh"
-
-    {
-        cat <<CONF
-base {
-    log_debug = off;
-    log_info = on;
-    log = "syslog:daemon";
-    daemon = on;
-    redirector = iptables;
-}
-redsocks {
-    local_ip = 0.0.0.0;
-    local_port = $local_port;
-    ip = $proxy_host;
-    port = $proxy_port;
-    type = http-connect;
-CONF
-        if [ -n "$proxy_user" ]; then
-            printf '    login = "%s";\n' "$(conf_escape "$proxy_user")"
-            printf '    password = "%s";\n' "$(conf_escape "$proxy_pass")"
-        fi
-        printf '}\n'
-    } > "$conf_new" || return 1
-
-    reserved='{ 0.0.0.0/8, 10.0.0.0/8, 44.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4 }'
-    {
-        printf 'table inet %s {\n' "$NFT_TABLE"
-        printf '  chain prerouting { type nat hook prerouting priority dstnat - 10; policy accept;\n'
-        while IFS= read -r dev; do
-            [ -n "$dev" ] || continue
-            printf '    iifname "%s" ip daddr %s return\n' "$dev" "$proxy_host"
-            printf '    iifname "%s" ip daddr %s return\n' "$dev" "$reserved"
-            printf '    iifname "%s" meta l4proto tcp redirect to :%s\n' "$dev" "$local_port"
-        done < "$ingress"
-        printf '  }\n'
-        printf '  chain output { type nat hook output priority dstnat - 10; policy accept;\n'
-        for probe_source in $(candidate_probe_sources); do
-            printf '    ip saddr %s return\n' "$probe_source"
-        done
-        printf '    ip daddr %s return\n' "$proxy_host"
-        printf '    ip daddr %s return\n' "$reserved"
-        printf '    meta l4proto tcp redirect to :%s\n' "$local_port"
-        printf '  }\n'
-        printf '  chain forward_guard { type filter hook forward priority filter - 10; policy accept;\n'
-        while IFS= read -r dev; do
-            [ -n "$dev" ] || continue
-            printf '    iifname "%s" ip daddr %s return\n' "$dev" "$proxy_host"
-            printf '    iifname "%s" ip daddr %s return\n' "$dev" "$reserved"
-            printf '    iifname "%s" udp dport 443 reject\n' "$dev"
-        done < "$ingress"
-        printf '  }\n'
-        printf '  chain output_guard { type filter hook output priority filter - 10; policy accept;\n'
-        for probe_source in $(candidate_probe_sources); do
-            printf '    ip saddr %s return\n' "$probe_source"
-        done
-        printf '    ip daddr %s return\n' "$proxy_host"
-        printf '    ip daddr %s return\n' "$reserved"
-        printf '    udp dport 443 reject\n'
-        printf '  }\n'
-        printf '}\n'
-    } > "$nft_new" || return 1
-
-    desired_hash="$(cat "$conf_new" "$nft_new" | md5sum | awk '{print $1}')"
-    current_hash="$(cat "$PROXY_HASH" 2>/dev/null || true)"
-    if [ "$desired_hash" = "$current_hash" ] && [ -r "$REDSOCKS_PID" ] && kill -0 "$(cat "$REDSOCKS_PID")" 2>/dev/null && nft list table inet "$NFT_TABLE" >/dev/null 2>&1; then
-        proxy_firewall enable "$local_port" "$share_mesh"
-        rm -f "$ingress" "$conf_new" "$nft_new"
-        return 0
-    fi
-
-    stop_proxy 1
-    mv "$conf_new" "$REDSOCKS_CONF"
-    mv "$nft_new" "$PROXY_NFT"
-    chmod 0600 "$REDSOCKS_CONF"
-    /usr/sbin/redsocks -t -c "$REDSOCKS_CONF" >/dev/null 2>&1 || { proxy_firewall disable; return 1; }
-    /usr/sbin/redsocks -c "$REDSOCKS_CONF" -p "$REDSOCKS_PID" >/dev/null 2>&1 || { proxy_firewall disable; return 1; }
-    nft -f "$PROXY_NFT" >/dev/null 2>&1 || { stop_proxy; return 1; }
-    printf '%s\n' "$desired_hash" > "$PROXY_HASH"
-    proxy_firewall enable "$local_port" "$share_mesh"
-    rm -f "$ingress"
-    log "PdaNet proxy active through $proxy_host:$proxy_port on phone USB wan3"
 }
 
 mesh_share_eligible()
@@ -658,31 +437,13 @@ select_wan()
     want_shared=0
     mesh_share_eligible "$bin" "$healthy" && want_shared=1
 
-    if [ "$failed" = 0 ] && [ "$selected" = wan3 ] && [ "$(uci_get wan3_proxy_enable)" = 1 ]; then
-        start_proxy "$device" "$want_shared" || failed=1
-    elif [ "$failed" = 0 ]; then
-        stop_proxy
-    fi
-
-    # Publish table 28 last. For PdaNet this guarantees that RF/DtD/xlink
-    # proxy handling is ready before Babel can advertise the gateway.
     if [ "$failed" = 0 ] && [ "$want_shared" = 1 ]; then
         install_default "$BABEL_EXPORT_TABLE" "$device" "$source" "$gateway" 1 || failed=1
         [ "$failed" = 1 ] || shared=1
     fi
 
     if [ "$failed" = 1 ]; then
-        stop_proxy
         restore_route_snapshot "$snapshot"
-        if [ "$previous" = wan3 ] && [ "$(uci_get wan3_proxy_enable)" = 1 ]; then
-            old_values="$(interface_values wan3 2>/dev/null || true)"
-            if [ -n "$old_values" ]; then
-                old_ifs="$IFS"; IFS='|'; set -- $old_values; IFS="$old_ifs"
-                old_shared=0
-                [ -s "$snapshot/28" ] && old_shared=1
-                start_proxy "$1" "$old_shared" >/dev/null 2>&1 || true
-            fi
-        fi
         rm -rf "$snapshot"
         write_state error "$previous" "" unknown 0 "Selection of $selected failed; previous route state restored"
         return 1
@@ -703,7 +464,6 @@ withdraw_local()
     ip -4 route flush table "$LOCAL_TABLE" >/dev/null 2>&1 || true
     ip -4 route flush table "$LOCAL_SUBNET_TABLE" >/dev/null 2>&1 || true
     ip -4 route flush table "$BABEL_EXPORT_TABLE" >/dev/null 2>&1 || true
-    stop_proxy
     /usr/local/bin/wan-tunnel-guard apply >/dev/null 2>&1 || true
     if ip -4 route show table "$REMOTE_MESH_TABLE" default | grep -q '^default'; then
         active=mesh
@@ -719,7 +479,6 @@ withdraw_local()
 
 restore_stock()
 {
-    stop_proxy
     remove_policy_rules
     ip -4 route flush table "$LOCAL_TABLE" >/dev/null 2>&1 || true
 
@@ -857,14 +616,8 @@ case "$COMMAND" in
     restore) remove_dynamic; restore_stock ;;
     remove|stop|disable) disable_package ;;
     route-event) route_event "${2:-}" "${3:-}" ;;
-    proxy-start)
-        device="$(detect_device 2>/dev/null || true)"
-        share=0; ip -4 route show table "$BABEL_EXPORT_TABLE" default | grep -q '^default' && share=1
-        start_proxy "$device" "$share"
-        ;;
-    proxy-stop) stop_proxy ;;
     inspect) [ $# -eq 2 ] || exit 2; interface_values "$2" ;;
     usb-support) usb_support_report ;;
     status) status ;;
-    *) echo "usage: $0 {apply|usb-apply|select WAN [PERSIST BIN HEALTHY]|withdraw [REASON]|restore|disable|route-event IFACE ACTION|proxy-start|proxy-stop|inspect WAN|usb-support|status}" >&2; exit 2 ;;
+    *) echo "usage: $0 {apply|usb-apply|select WAN [PERSIST BIN HEALTHY]|withdraw [REASON]|restore|disable|route-event IFACE ACTION|inspect WAN|usb-support|status}" >&2; exit 2 ;;
 esac

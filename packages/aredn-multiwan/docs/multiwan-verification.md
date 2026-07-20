@@ -1,4 +1,4 @@
-# PollyWAN r26 build and verification
+# PollyWAN r27 build and verification
 
 ## 1. Static source verification
 
@@ -25,8 +25,8 @@ make MAINTARGET=ath79 SUBTARGET=mikrotik prepare
 
 grep '^CONFIG_PACKAGE_aredn-multiwan=m$' openwrt/.config
 make -C openwrt package/aredn-multiwan/clean V=sc -j1
-make -C openwrt package/aredn-multiwan/compile V=sc -j1 2>&1 | tee /tmp/pollywan-r26-build.log
-find openwrt/bin -name 'aredn-multiwan-0.1.0-r26.apk' -print -exec sha256sum {} \;
+make -C openwrt package/aredn-multiwan/compile V=sc -j1 2>&1 | tee /tmp/pollywan-r27-build.log
+find openwrt/bin -name 'aredn-multiwan-0.1.0-r27.apk' -print -exec sha256sum {} \;
 ```
 
 If matching kernel-module APKs are unavailable, build the full exact target. Never mix architecture, firmware, or kernel ABI.
@@ -50,19 +50,18 @@ ip -4 rule show > /tmp/pollywan-before/rules4
 ip -6 rule show > /tmp/pollywan-before/rules6
 for t in 22 26 27 28 99 101 102 103; do ip -4 route show table "$t" > "/tmp/pollywan-before/table.$t"; done
 ip -4 route show table main > /tmp/pollywan-before/main
-nft list ruleset > /tmp/pollywan-before/nft
 ```
 
 Install without enabling:
 
 ```sh
-apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0-r26.apk
+apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0-r27.apk
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.enabled)" = 0 ]
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.port_roles_enabled)" = 0 ]
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.wan3_enable)" = 0 ]
 ```
 
-Confirm there is no managed port marker, `wan3`, redsocks PID, proxy nftables table, package route/rule state, radio-mode change, or GPS difference. Only the new `aredn.multiwan` UCI section is expected.
+Confirm there is no managed port marker, `wan3`, package route/rule state, radio-mode change, or GPS difference. Only the new `aredn.multiwan` UCI section is expected.
 
 ## 4. Wi-Fi WAN ownership test
 
@@ -179,25 +178,26 @@ Expected:
 - table 22 is untouched
 - a WAN netifd event immediately withdraws table 28
 - `redistribute proto 3 ... deny` closes the stock protocol-boot race
-- route/proxy failure restores the previous main/26/27/28 snapshot
+- route failure restores the previous main/26/27/28 snapshot
 - no eligible local WAN leaves 26/27/28 empty, allowing table-22 fallback only through AREDN policy
 
 ## 10. Tunnel isolation
 
 For every `wg*` and `tun*` interface, verify IPv4 and IPv6 preference 45 look up table 99. AREDN mesh route preferences 10/20/30 remain usable, but tunnel ingress cannot reach tables 26, 28, 22, or a main Internet default. Babel must neither learn nor advertise IPv4/IPv6 defaults on a tunnel.
 
-## 11. PdaNet
+## 11. Android USB tether
 
 With a phone physically tethered and WAN 3 active, verify:
 
 - `wan3` is a USB-backed network device with DHCP and table 103
-- proxy address/port/credentials are stored on the hAP
-- LAN/node TCP is proxied
-- proxy recursion and private/mesh/44Net destinations are excluded
-- WAN1/2 source-bound probes bypass transparent proxying
-- RF/DtD/xlink ingress is included only while table 28 is published
-- tunnel ingress is never proxied
-- UDP/443 fallback and cleanup work as documented
+- RNDIS, CDC Ethernet, and CDC NCM detection paths remain covered
+- Android supplies an IPv4 address and gateway
+- health uses direct gateway and source-bound HTTPS checks
+- Cloudflare WAN 3 tests use `curl --interface "$SOURCE" --proxy ''`
+- WAN 3 can be selected and deselected
+- disabling USB tethering falls back safely
+- re-enabling tethering recovers
+- reboot preserves disabled/enabled configuration without changing GPS ownership
 
 ## 12. Removal and evidence
 
@@ -205,6 +205,6 @@ With a phone physically tethered and WAN 3 active, verify:
 apk del aredn-multiwan
 ```
 
-Verify previous AREDN include files and roles are restored, normal Ethernet or Wi-Fi WAN 1 returns, WAN 3/proxy/package tables/rules/guards/UI are removed, and GPS/radio state remains unchanged.
+Verify previous AREDN include files and roles are restored, normal Ethernet or Wi-Fi WAN 1 returns, WAN 3/package tables/rules/guards/UI are removed, and GPS/radio state remains unchanged.
 
-Collect Git SHAs, subtree sync result, APK/dependency checksums, build logs, exact ABI, before/after GPS/radio snapshots, role/rollback evidence, route/rule dumps, calibration/SLA JSON, Babel/tunnel/PdaNet tests, and uninstall results. Do not mark r26 ready until package build and physical target gates pass.
+Collect Git SHAs, subtree sync result, APK/dependency checksums, build logs, exact ABI, before/after GPS/radio snapshots, role/rollback evidence, route/rule dumps, calibration/SLA JSON, Babel/tunnel/Android USB tests, and uninstall results. Do not mark r27 ready until package build and physical target gates pass.

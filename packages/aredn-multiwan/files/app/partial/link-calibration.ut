@@ -8,7 +8,7 @@ function readResult(name)
     try { return json(status); } catch (_) { return null; }
 }
 function labelClass(c) { return c === "fast" ? "Fast" : c === "medium" ? "Medium" : c === "low" ? "Low" : "Unknown"; }
-const names = [ { name: "wan", label: "WAN 1" }, { name: "wan2", label: "WAN 2" }, { name: "wan3", label: "USB WAN" } ];
+const names = [ { name: "wan", label: "WAN 1" }, { name: "wan2", label: "WAN 2" }, { name: "wan3", label: "Android USB tether" } ];
 %}
 <section id="link-calibration" class="ctrl pw-card pw-card-wide pw-card-clickable" hx-get="status/e/link-calibration" hx-target="#ctrl-modal" hx-swap="innerHTML" tabindex="0" aria-labelledby="pw-cal-title">
     <div class="pw-card-head"><h2 id="pw-cal-title">Connection speed test</h2><span class="pw-configure">Configure</span></div>

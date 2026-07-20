@@ -15,8 +15,6 @@ package_has_effects()
 {
     [ -e /etc/aredn_include/.aredn-multiwan-ports ] && return 0
     ip -4 route show table 26 default 2>/dev/null | grep -q '^default' && return 0
-    [ -r /var/run/wan3-redsocks.pid ] && return 0
-    nft list table inet aredn_wan3_proxy >/dev/null 2>&1 && return 0
     return 1
 }
 

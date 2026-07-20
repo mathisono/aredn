@@ -25,7 +25,6 @@ setup_root()
     ln -s /bin/busybox "$root/usr/bin/printf"
     ln -s /bin/busybox "$root/usr/bin/pidof"
     ln -s /bin/busybox "$root/sbin/ip"
-    ln -s /bin/busybox "$root/usr/sbin/nft"
     cp "$ROOT_SRC/files/usr/local/bin/wan-port-manager" "$root/usr/local/bin/"
     chmod 755 "$root/usr/local/bin/wan-port-manager"
     mknod -m 666 "$root/dev/null" c 1 3
@@ -200,7 +199,6 @@ run_ethernet_case()
     [ "$(chroot "$root" /sbin/uci get aredn.multiwan.port_roles_enabled)" = 0 ]
     [ "$(chroot "$root" /sbin/uci get aredn.multiwan.wan2_enable)" = 0 ]
     [ "$(chroot "$root" /sbin/uci get aredn.multiwan.wan3_enable)" = 0 ]
-    [ "$(chroot "$root" /sbin/uci get aredn.multiwan.wan3_proxy_enable)" = 0 ]
     echo "mock Ethernet port generation passed: $kind"
 }
 

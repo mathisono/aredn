@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=aredn-multiwan
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=26
+PKG_RELEASE:=27
 PKG_LICENSE:=GPL-3.0-only
 PKG_MAINTAINER:=AREDN contributors
 PKGARCH:=all
@@ -15,16 +15,15 @@ define Package/aredn-multiwan
   TITLE:=PollyWAN adaptive AREDN multi-WAN and USB tethering
   URL:=https://github.com/mathisono/AREDN_PollyWAN
   DEPENDS:=@(TARGET_ath79_mikrotik||TARGET_ipq40xx_mikrotik) \
-    +ca-bundle +curl +ip-tiny +jshn +jsonfilter +nftables-json +redsocks \
-    +kmod-nft-nat +TARGET_ath79:kmod-usb2 +TARGET_ath79:swconfig
+    +ca-bundle +curl +jshn +jsonfilter \
+    +TARGET_ath79:swconfig
 endef
 
 define Package/aredn-multiwan/description
  PollyWAN is an experimental optional package for the MikroTik hAP ac lite,
  hAP ac2 and hAP ac3. It treats WAN 1 as either administrator-selected hAP Ethernet or the
  existing AREDN Wi-Fi client logical interface, assigns WAN 2 to Ethernet,
- keeps WAN 3 fixed to a phone USB RNDIS/CDC tether, supports hAP-side PdaNet
- HTTP CONNECT proxy settings, regulates the three local links using health and
+ keeps WAN 3 fixed to an Android USB RNDIS/CDC Ethernet tether, regulates the three local links using health and
  bounded speed classes, synchronizes AREDN routing tables 26/27/28, preserves
  table 22 as the remote Mesh WAN fallback, prevents unqualified Babel default
  advertisement, and hard-blocks tunnel ingress from Internet defaults.

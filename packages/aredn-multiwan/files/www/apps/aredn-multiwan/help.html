@@ -1,34 +1,13 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PollyWAN r26 setup</title><style>body{font-family:system-ui,sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;line-height:1.5;color:#1f2937}code,pre{background:#f3f4f6;border-radius:.3rem}code{padding:.1rem .25rem}pre{padding:1rem;overflow:auto}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d1d5db;padding:.45rem;text-align:left}.note{border-left:4px solid #f59e0b;padding:.5rem 1rem;background:#fffbeb}.ok{border-left:4px solid #10b981;padding:.5rem 1rem;background:#ecfdf5}</style></head><body>
-<h1>PollyWAN r26 for AREDN</h1>
-<p>PollyWAN is an optional package for the MikroTik hAP ac lite, hAP ac2, and hAP ac3. It regulates three local WAN candidates, integrates with AREDN Mesh WAN routing, and is disabled and inert after installation.</p>
-<h2>Inputs</h2><table><tr><th>Logical name</th><th>Input</th><th>Private table</th></tr><tr><td><code>wan</code></td><td>WAN 1: AREDN Wi-Fi client on <code>wlan0</code>/<code>wlan1</code>, or selected Ethernet <code>br-wan</code>.</td><td>101</td></tr><tr><td><code>wan2</code></td><td>Selected hAP Ethernet port(s).</td><td>102</td></tr><tr><td><code>wan3</code></td><td>Phone USB RNDIS/CDC tether using existing kernel support.</td><td>103</td></tr><tr><td>Remote Mesh WAN</td><td>Babel-learned fallback, not a local candidate.</td><td>22</td></tr></table>
-<div class="note"><strong>Wi-Fi rule:</strong> AREDN Wi-Fi client mode keeps the logical interface name <code>wan</code>. Wi-Fi WAN and Ethernet WAN 1 cannot be active simultaneously. PollyWAN never changes radio mode and removes WAN 1 from the Ethernet role choices while Wi-Fi owns it.</div>
-<p>Use <strong>hAP Ethernet port roles</strong> to assign LAN, WAN 1, WAN 2, disabled, and tagged DtD VLAN 2. Applying starts a timed rollback; reconnect and select <strong>Confirm working</strong>.</p>
-<h2>Phone USB/PdaNet</h2><pre>Android phone -> data USB cable -> hAP USB host -> RNDIS/CDC -> wan3 DHCP
-                                                        -> optional HTTP CONNECT proxy</pre>
-<p>Enter the proxy address, TCP port, and optional credentials on the hAP. Common PdaNet values are <code>192.168.49.1:8000</code>. PollyWAN does not replace kernel modules; unsupported kernels leave WAN 3 down. The proxy carries public IPv4 TCP, not general UDP or incoming connections.</p>
+<!doctype html><html><head><meta charset="utf-8"><title>PollyWAN help</title><style>body{font-family:system-ui,sans-serif;margin:2rem;line-height:1.45;max-width:980px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:.45rem;text-align:left}code,pre{background:#f5f5f5;padding:.1rem .25rem}pre{padding:.75rem;overflow:auto}.ok{background:#eef8ee;border:1px solid #9c9;padding:1rem}.warn{background:#fff8e6;border:1px solid #e2c36b;padding:1rem}</style></head><body>
+<h1>PollyWAN setup and recovery</h1>
+<p>PollyWAN is disabled after installation. It does not publish local WAN defaults, change ports, scan USB, or alter GPS until an administrator enables it.</p>
+<h2>Inputs</h2><table><tr><th>Logical name</th><th>Input</th><th>Private table</th></tr><tr><td><code>wan</code></td><td>WAN 1: AREDN Wi-Fi client on <code>wlan0</code>/<code>wlan1</code>, or selected Ethernet <code>br-wan</code>.</td><td>101</td></tr><tr><td><code>wan2</code></td><td>Selected hAP Ethernet port(s).</td><td>102</td></tr><tr><td><code>wan3</code></td><td>Android USB tether using RNDIS, CDC Ethernet, or CDC NCM and DHCP.</td><td>103</td></tr><tr><td>Remote Mesh WAN</td><td>Babel-learned fallback, not a local candidate.</td><td>22</td></tr></table>
+<h2>Android USB Tether</h2><pre>Android phone -> data-capable USB cable -> hAP USB host -> RNDIS/CDC/NCM -> wan3 DHCP</pre>
+<p>Connect a data-capable USB cable, unlock the Android phone, open hotspot/tethering settings, enable USB tethering, enable WAN 3 in PollyWAN, wait for DHCP, then verify health before selecting WAN 3. USB charging alone is insufficient.</p>
+<p>The phone supplies DHCP, gateway, DNS, and NAT Internet access. Supported phones normally expose RNDIS, CDC Ethernet, or CDC NCM, but driver availability depends on the AREDN kernel and hardware. PollyWAN reports runtime USB-network support and leaves WAN 1/WAN 2 usable if WAN 3 USB support is unavailable.</p>
 <div class="ok"><strong>GPS safety:</strong> when WAN 3 is disabled, PollyWAN never opens <code>/dev/ttyACM0</code> or <code>/dev/ttyUSB0</code>, edits gpsd, changes AREDN GPS time/location, changes radio mode, or changes USB power. It searches only <code>/sys/class/net</code> after WAN 3 is explicitly enabled.</div>
-<h2>Manual and Automatic selection</h2><p>Health is not speed. Lightweight health checks decide whether a WAN is usable. Optional speed tests classify only healthy WANs as Low, Medium, Fast, or Unknown.</p>
-<p>Manual mode keeps the selected healthy connection and falls back immediately when it fails. Automatic mode keeps the current healthy connection unless another WAN has a higher class for the promotion observations. Same-class Mbps differences do not cause flapping.</p>
-<h2>Connection speed test</h2><p>AREDN node test uses reverse iperf3 to measure throughput to a selected AREDN node that already runs an iperf3 server. This measures the selected node-to-node path and may not represent public Internet performance.</p>
-<p>Internet test - Cloudflare reads Cloudflare trace data, then downloads a bounded payload from speed.cloudflare.com. Cloudflare uses Anycast routing; the displayed colo is the edge selected by BGP and ISP peering, not necessarily the nearest facility.</p>
-<h2>Mesh WAN and Babel</h2><p>Table 26 is the selected local default, table 27 its connected subnet, and table 28 is published only when the selected path is healthy and meets the mesh-share bin. Table 22 remains the remote Mesh WAN. A protocol-boot default is denied from Babel so only PollyWAN's qualified protocol-static table-28 route is advertised.</p>
-<h2>Tunnels</h2><p>WireGuard and <code>tun*</code> ingress may use AREDN mesh routes but is hard-blocked from local or remote Internet defaults. This policy is not a checkbox.</p>
-<h2>Verification</h2><pre>/usr/local/bin/wan-port-manager wan-transport
-/usr/local/bin/wan-port-manager status
-/usr/local/bin/wan-port-manager gps-status
-/usr/local/bin/wan-sla status
-/usr/local/bin/wan3-manager status
-ip -4 route show table 22
-ip -4 route show table 26
-ip -4 route show table 27
-ip -4 route show table 28
-ip -4 route show table 101
-/usr/local/bin/wan-tunnel-guard status</pre>
-<h2>Recovery</h2><pre>uci -c /etc/config.mesh set aredn.multiwan.enabled='0'
-uci -c /etc/config.mesh commit aredn
-/usr/local/bin/wan-port-manager restore
-/usr/local/bin/wan3-manager disable
-/etc/init.d/wan3-manager stop</pre>
-<p>See <code>/usr/share/doc/aredn-multiwan/</code> for complete setup, build, test, Wi-Fi WAN, GPS, and rollback instructions.</p>
+<h2>Health and Selection</h2>
+<p>Health validates the private table, source-bound gateway reachability, and direct source-bound HTTPS using <code>curl --interface "$SOURCE" --proxy ''</code>. Cloudflare speed tests use the same direct source-bound path. Node-to-node iperf3 tests are unchanged.</p>
+<h2>Recovery</h2>
+<p>Use the PollyWAN disable action or remove the package to restore ordinary AREDN WAN behavior. Route rollback restores main, table 26, table 27, and table 28 snapshots after failed selection.</p>
 </body></html>

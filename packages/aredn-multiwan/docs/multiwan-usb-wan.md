@@ -1,90 +1,79 @@
-# WAN 3 phone USB tether and PdaNet
+# WAN 3 Android USB Tether
 
-## Physical topology
-
-```text
-Android phone running PdaNet or standard USB tether
-        |
-        | data-capable USB cable
-        v
-hAP USB host
-        |
-        | RNDIS / CDC Ethernet / CDC NCM
-        v
-wan3 DHCP (private table 103)
-        |
-        +-- optional HTTP CONNECT proxy configured on the hAP
-```
-
-The phone must expose a USB network interface and DHCP path. A proxy address alone is insufficient when the hAP has no USB network device/address.
-PollyWAN uses USB-network drivers already present in the running kernel. It does not install or replace kernel modules; when existing RNDIS/CDC support is unavailable, WAN 3 remains down and no dynamic interface, route, or firewall state is created.
-
-## Standard routed tether
-
-1. Connect the phone to the hAP USB host using a data cable.
-2. Enable Android USB tethering.
-3. Open PollyWAN → **WAN 3: phone USB tether / PdaNet**.
-4. Enable WAN 3 and leave the interface at `auto`.
-5. Disable the PdaNet proxy option.
-6. Save and wait for `wan3` to receive IPv4.
-7. Select WAN 3 manually or allow adaptive selection.
-
-## PdaNet
-
-1. Enable **Activate USB Mode** in PdaNet and leave it running.
-2. Confirm the hAP sees an existing RNDIS/CDC network interface and `wan3` receives DHCP.
-3. Enable **Use PdaNet HTTP CONNECT proxy**.
-4. Enter the values displayed by PdaNet. Common defaults are:
+WAN 3 is a normal Android USB tethered Ethernet WAN:
 
 ```text
-IPv4: 192.168.49.1
-TCP:  8000
-Type: HTTP CONNECT
+Android phone -> data-capable USB cable -> hAP USB host
+              -> RNDIS, CDC Ethernet, or CDC NCM network device
+              -> wan3 DHCP -> private routing table 103
 ```
 
-Optional username/password fields are stored on the hAP. A blank password keeps the saved value unless **Clear saved password** is selected.
+The phone supplies DHCP, gateway, DNS, and NAT Internet access. PollyWAN does
+not run a proxy, redirector, transparent firewall table, or phone-side helper.
 
-## Proxy operation
+## Android Setup
 
-When WAN 3 is selected and proxy mode is enabled, PollyWAN starts a private redsocks instance on TCP port `12346`, with its own configuration and PID. It does not stop or reuse the stock redsocks service.
+1. Connect a data-capable USB cable between the Android phone and the hAP USB host.
+2. Unlock the Android phone.
+3. Open Android hotspot/tethering settings.
+4. Enable USB tethering.
+5. Enable WAN 3 in PollyWAN.
+6. Wait for DHCP.
+7. Verify health before selecting WAN 3.
 
-Eligible public IPv4 TCP from LAN and the node is redirected. RF/DtD/xlink ingress is added only when the link is qualified and table 28 is published. Tunnel ingress is never proxied and is hard-blocked from Internet defaults.
+USB charging alone is insufficient. The phone must expose a USB network device
+and lease an IPv4 address to `wan3`.
 
-Excluded destinations include:
+Supported Android phones normally expose RNDIS, CDC Ethernet, or CDC NCM. Driver
+availability depends on the running AREDN kernel and hardware. PollyWAN detects
+existing `usbnet`, `rndis_host`, `cdc_ether`, and `cdc_ncm` support at runtime,
+but it does not bundle or force-install kernel modules from another firmware
+build.
 
-- proxy endpoint itself
-- AREDN mesh and 44Net
-- LAN/private/CGNAT/link-local/reserved/multicast ranges
-- source-bound WAN 1/WAN 2 health and calibration probes
-
-HTTP CONNECT limitations:
-
-- general UDP does not work
-- UDP/443 is rejected to encourage browser fallback from QUIC to TCP/HTTPS
-- incoming connections and port forwarding do not work
-- UDP-only voice/gaming/VPN profiles may fail
-- IPv6 Internet traffic is not transparently proxied
+WAN 1 and WAN 2 remain fully usable when USB host or USB-network support is not
+available.
 
 ## Verification
 
+Expected dynamic network state after Android USB tethering is enabled:
+
 ```sh
+/usr/local/bin/wan3-manager usb-support
 ubus call network.interface.wan3 status
 ip -4 route show table 103
-/usr/local/bin/wan3-manager status
-cat /var/run/wan3-redsocks.pid
-nft list table inet aredn_wan3_proxy
-logread -e aredn-multiwan
-logread -e redsocks
 ```
 
-Direct proxy test:
+Expected status fields:
+
+```text
+detected device
+IPv4 address
+gateway
+link state
+```
+
+Expected UI states:
+
+```text
+Disabled
+Waiting for phone
+USB device detected
+Requesting DHCP
+Connected
+No compatible USB network driver
+```
+
+WAN 3 health and Cloudflare speed tests use direct source-bound HTTPS:
 
 ```sh
-source_ip="$(ubus call network.interface.wan3 status | jsonfilter -e '@["ipv4-address"][0].address')"
-curl --interface "$source_ip" --proxy http://192.168.49.1:8000 \
-  --connect-timeout 10 https://example.com/ -o /dev/null -v
+curl --interface "$SOURCE" --proxy ''
 ```
 
-## GPS coexistence
+The AREDN node-to-node iperf3 method is unchanged.
 
-With WAN 3 disabled, PollyWAN never enumerates or opens serial GPS devices and does not scan USB networking. Existing USB network kernel support does not change AREDN's GPS configuration. See [port-roles-and-gps.md](port-roles-and-gps.md) for the required before/after checks.
+## GPS Safety
+
+WAN 3 discovery runs only after PollyWAN and WAN 3 are enabled. It enumerates
+network devices under `/sys/class/net` and never opens `/dev/ttyACM0` or
+`/dev/ttyUSB0`, edits gpsd, changes AREDN GPS time/location settings, changes
+radio mode, or changes USB power.
