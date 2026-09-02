@@ -74,10 +74,10 @@ function normalizedXlinks(raw)
         const vlan = int(ux.vlan);
         const cidr = int(ux.cidr);
         const cost = ux.cost == null || ux.cost === "" ? null : int(ux.cost);
-        if (!match(ux.name || "", /^xlink[0-9]+$/) || seen[ux.name]) throw "invalid XLink name";
-        if (vlan < 4 || vlan > 4095 || cidr < 16 || cidr > 32) throw "invalid XLink network";
-        if (!match(ux.ipaddr || "", constants.reIP)) throw "invalid XLink address";
-        if (cost != null && (cost < 0 || cost > 9999)) throw "invalid XLink cost";
+        if (!match(ux.name || "", /^xlink[0-9]+$/) || seen[ux.name]) die("invalid XLink name");
+        if (vlan < 4 || vlan > 4095 || cidr < 16 || cidr > 32) die("invalid XLink network");
+        if (!match(ux.ipaddr || "", constants.reIP)) die("invalid XLink address");
+        if (cost != null && (cost < 0 || cost > 9999)) die("invalid XLink cost");
         seen[ux.name] = true;
         push(normalized, {
             name: ux.name,

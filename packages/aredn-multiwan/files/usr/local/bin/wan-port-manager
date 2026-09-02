@@ -520,7 +520,7 @@ write_managed_files()
         rm -f "$INCLUDE_DIR/swconfig.user"
     fi
     transport="$(wan_transport)" || return 1
-    printf 'board=%s\nversion=7\nwan_transport=%s\n' "$(board_name)" "$transport" > "$MARKER"
+    printf 'board=%s\nversion=8\nwan_transport=%s\n' "$(board_name)" "$transport" > "$MARKER"
 }
 
 find_zone()
