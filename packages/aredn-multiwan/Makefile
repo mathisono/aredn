@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=aredn-multiwan
 PKG_VERSION:=0.1.0.29.5
-PKG_RELEASE:=8
+PKG_RELEASE:=9
 PKG_LICENSE:=GPL-3.0-only
 PKG_MAINTAINER:=AREDN contributors
 PKGARCH:=all
@@ -52,6 +52,9 @@ fi
 # so the new daemon and migrated ordered-policy configuration take effect.
 if [ "$${PKG_UPGRADE:-0}" = 1 ]; then
   /etc/init.d/wan3-manager restart >/dev/null 2>&1 || true
+  # The AREDN ucode handler caches compiled GUI templates. Reload it after the
+  # package transaction returns so an upgrade cannot keep serving old pages.
+  (sleep 2; /etc/init.d/uhttpd restart) >/dev/null 2>&1 &
 else
   # start_service is intentionally inert while aredn.multiwan.enabled=0
   /etc/init.d/wan3-manager start >/dev/null 2>&1 || true

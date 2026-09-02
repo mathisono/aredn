@@ -88,7 +88,8 @@ done
 # Package metadata and optional-only target contract.
 require_text Makefile 'PKG_NAME:=aredn-multiwan'
 require_text Makefile 'PKG_VERSION:=0.1.0.29.5'
-require_text Makefile 'PKG_RELEASE:=8'
+require_text Makefile 'PKG_RELEASE:=9'
+require_text Makefile '/etc/init.d/uhttpd restart'
 require_text Makefile 'URL:=https://github.com/mathisono/AREDN_PollyWAN'
 reject_text Makefile '+ip-tiny'
 reject_text Makefile '+redsocks'
@@ -235,7 +236,7 @@ require_text "$PORTS" "printf 'wifi:%s\\n'"
 require_text "$PORTS" 'invalid:both-radios'
 require_text "$PORTS" 'no Ethernet port may be assigned to WAN 1'
 require_text "$PORTS" 'our Ethernet WAN override'
-require_text "$PORTS" 'version=8'
+require_text "$PORTS" 'version=9'
 require_text "$PORTS" 'wan_transport='
 require_text "$PORTS" 'WAN 1 transport changed from'
 require_text "$PORTS" 'mikrotik,routerboard-952ui-5ac2nd) echo swconfig'
