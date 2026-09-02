@@ -338,6 +338,49 @@ mount support. Recovery and remount must be tested after the intended device
 is physically reattached and identified; no storage device was unmounted,
 formatted, repaired, or otherwise changed during this pass.
 
+### R29.5 r10 Remote Mesh WAN tunnel checkpoint
+
+Live Babel inspection on `KP4DJT-HAP-AC2-VAN` found 405 routes and four healthy
+neighbors but no accepted `0.0.0.0/0`, even though the active AREDN Babel
+configuration permits a default into table 22. PollyWAN's managed tunnel block
+was rejecting incoming and outgoing IPv4 and IPv6 defaults on
+`wgsac1fbf80`. A temporary removal of the incoming rules was immediately
+reversed by periodic guard reconciliation, proving the behavior had to be
+changed at the authoritative generator rather than by editing the generated
+file.
+
+r10 removes only the incoming IPv4 and IPv6 Babel default rejections. It keeps
+the outgoing IPv4/IPv6 default filters, the protocol-boot redistribution
+guard, and the preference-45 table-99 blackhole for traffic arriving from a
+tunnel. The node may therefore learn a remote table-22 default for its own
+ordered route policy without advertising a default back over the tunnel or
+becoming an Internet exit for tunnel clients. Static and root mock verification
+reject any reintroduction of incoming filters and require both outgoing
+filters.
+
+The stable AREDN 4.26.7.0 hAP ac2 build used standalone commit
+`a3977597cd2341059e3772022f45cdf27d86586c` and integration commit
+`15f8a5e3663a2ddc27d30f18c303f1048a20005a`. It produced
+`aredn-multiwan-0.1.0.29.5-r10.apk` for `arm_cortex-a7_neon-vfpv4`, 73,696
+bytes, with SHA-256
+`b70de87e24f78ea63ad391d42a7f9fa6de3d5daae4bad3a731d436f7f5b2eaf1`.
+The checksum matched on the build host, MSE-88, and node; APK integrity,
+metadata, extracted payload, and simulated r9-to-r10 upgrade checks passed.
+A checksummed pre-r10 backup is retained at
+`/home/mat/pollywan-backups/KP4DJT-HAP-AC2-VAN-20260902T064958Z-pre-r10`.
+
+After deployment and a forced reconciliation cycle, both the persistent and
+active Babel configurations contained zero incoming tunnel-default filters,
+both outgoing filters, and the protocol-boot filter. Table 22 immediately
+installed a default through `172.31.191.128` on `wgsac1fbf80`. The live exit
+resolver identified `K5GLH-HAP-DC` (`10.207.164.4`) as the origin, confirming
+that the old incoming guard had suppressed a real Mesh WAN advertisement.
+PollyWAN selected Remote Mesh WAN according to the configured priority and
+published the origin, next hop, interface, and healthy state. Authenticated
+requests to the complete dashboard and live policy fragments all returned HTTP
+200 and displayed Remote Mesh WAN as Active. The manager, Babel, GPS
+`/dev/ttyACM0`, gpsd, and management access remained healthy.
+
 ### Ordered Route Policy Setup
 
 R29.5 replaces the Manual/Automatic and speed-ranked policy with one ordered
