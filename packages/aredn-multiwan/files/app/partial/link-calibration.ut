@@ -1,0 +1,54 @@
+{%
+function readResult(name)
+{
+    const last = fs.readfile(`/tmp/wan-speed/${name}.json`);
+    if (last) { try { const parsed = json(last); if (parsed && parsed.valid === true) return parsed; } catch (_) {} }
+    const status = fs.readfile(`/tmp/wan-speed/${name}.status.json`);
+    if (!status) return null;
+    try { return json(status); } catch (_) { return null; }
+}
+function labelClass(c) { return c === "fast" ? "Fast" : c === "medium" ? "Medium" : c === "low" ? "Low" : "Unknown"; }
+function readPolicyStatus()
+{
+    const raw = fs.readfile("/tmp/wan-sla/status.json");
+    if (!raw) return null;
+    try { return json(raw); } catch (_) { return null; }
+}
+function liveMeshExit()
+{
+    const f = fs.popen("/usr/local/bin/wan-mesh-exit 2>/dev/null");
+    if (!f) return { available: false, node: "", nextHop: "", device: "", metric: "" };
+    const parts = split(trim(f.read("all") || ""), "|");
+    f.close();
+    return { available: parts[0] === "1", node: parts[1] === "Unknown" ? "" : parts[1] || "", nextHop: parts[3] || "", device: parts[4] || "", metric: parts[5] || "" };
+}
+const names = [ { name: "wan", label: "WAN 1" }, { name: "wan2", label: "WAN 2" }, { name: "wan3", label: "Android USB tether" } ];
+const policyStatus = readPolicyStatus();
+const meshEnabled = uciMesh.get("aredn", "multiwan", "mesh_enable") === "1";
+const liveMesh = liveMeshExit();
+const meshAvailable = liveMesh.available || (policyStatus && policyStatus.remote_mesh_default === true);
+const meshExitNode = liveMesh.node || (policyStatus && policyStatus.remote_mesh_exit_node) || "Origin not identified";
+const meshNextHop = liveMesh.nextHop || (policyStatus && policyStatus.remote_mesh_next_hop) || "Unknown";
+const meshDevice = liveMesh.device || (policyStatus && policyStatus.remote_mesh_interface) || "Unknown";
+const meshMetric = liveMesh.metric || (policyStatus && policyStatus.remote_mesh_metric) || "Unknown";
+%}
+<section id="link-calibration" class="ctrl pw-card pw-card-wide pw-card-clickable" hx-get="status/e/link-calibration" hx-target="#ctrl-modal" hx-swap="innerHTML" tabindex="0" aria-labelledby="pw-cal-title">
+    <div class="pw-card-head"><h2 id="pw-cal-title">Connection speed test</h2><span class="pw-configure">Configure</span></div>
+    <div class="pw-muted">Health is checked continuously. Throughput is measured only when requested or on the optional slow schedule.</div>
+    <div class="pw-cal-grid">
+        {% for (let i = 0; i < length(names); i++) { const item = names[i]; const r = readResult(item.name); %}
+        <div class="pw-tile">
+            <strong>{{item.label}}</strong>
+            <div>{{r && r.valid ? labelClass(r.class) : r && r.message ? "Failed" : "Not tested"}}</div>
+            <div class="pw-muted">{{r && r.valid ? sprintf("%.1f Mbps", r.mbps) : (r && r.message || "No recent measurement")}}</div>
+            <div class="pw-muted">{{r && r.valid ? ((r.colo || r.remote_node || "") + " " + (r.public_ip || "")) : "Unknown class"}}</div>
+        </div>
+        {% } %}
+        <div class="pw-tile">
+            <strong>Remote Mesh WAN</strong>
+            <div>{{meshAvailable ? (!meshEnabled ? "Available (not selected)" : policyStatus && policyStatus.active === "mesh" ? "Active" : "Available standby") : "No advertised exit"}}</div>
+            <div class="pw-muted">Exit node: {{meshAvailable ? meshExitNode : "No table 22 route"}}</div>
+            <div class="pw-muted">{{meshAvailable ? meshNextHop + " via " + meshDevice + " · metric " + meshMetric : "Status only; no local speed test"}}</div>
+        </div>
+    </div>
+</section>

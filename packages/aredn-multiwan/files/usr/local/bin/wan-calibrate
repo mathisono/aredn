@@ -1,0 +1,3 @@
+#!/bin/sh
+# Compatibility wrapper for the retired calibration-object command.
+exec /usr/local/bin/wan-speed-test test "${1:-wan}" "${3:-}"

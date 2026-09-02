@@ -1,0 +1,20 @@
+{%
+let iface = null;
+try { iface = ubus.call("network.interface.wan3", "status"); } catch (_) {}
+const addresses = (iface && iface["ipv4-address"]) || [];
+const enabled = uciMesh.get("aredn", "multiwan", "wan3_enable") === "1";
+const device = iface && (iface.l3_device || iface.device) || "";
+const routes = iface && iface.route || [];
+let gateway = "";
+for (let i = 0; i < length(routes); i++) if (routes[i].target === "0.0.0.0") { gateway = routes[i].nexthop || ""; break; }
+const stateText = !enabled ? "Disabled" : !device ? "No USB network device detected" : !length(addresses) ? "Waiting for DHCP" : "Upstream reachable";
+const stateClass = enabled ? length(addresses) ? "pw-status-ok" : "pw-status-warn" : "pw-status-off";
+%}
+<section id="usb-wan" class="ctrl pw-card pw-card-main pw-card-clickable {{stateClass}}" hx-get="status/e/usb-wan" hx-target="#ctrl-modal" hx-swap="innerHTML" tabindex="0" aria-labelledby="pw-wan3-title">
+    <div class="pw-card-head"><h2 id="pw-wan3-title">Android USB tether</h2><span class="pw-configure">Configure</span></div>
+    <div class="pw-badge"><span class="pw-status-dot"></span>{{stateText}}</div>
+    <div class="pw-meta-grid">
+        <div class="pw-label">Device</div><div class="pw-value">{{device || "Absent"}}</div>
+        <div class="pw-label">IPv4</div><div class="pw-value">{{length(addresses) ? addresses[0].address : "Absent"}}</div>
+    </div>
+</section>

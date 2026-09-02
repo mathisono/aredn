@@ -1,0 +1,13 @@
+#!/bin/sh
+
+printf 'Content-Type: application/json\r\n'
+printf 'Cache-Control: no-store\r\n'
+printf 'Access-Control-Allow-Origin: *\r\n'
+printf '\r\n'
+
+TELEMETRY_FILE="${TELEMETRY_FILE:-/tmp/wan-sla/telemetry.json}"
+if [ -r "$TELEMETRY_FILE" ]; then
+    cat "$TELEMETRY_FILE"
+else
+    printf '%s\n' '{"schema_version":1,"package_version":"0.1.0-r29.5","enabled":false,"mode":"ordered","active":null,"health":"unknown","gateway_reachable":false,"upstream_reachable":false,"selection_healthy":false,"export_eligible":false,"device":null,"source":null,"gateway":null,"private_table":null,"selected_table":null,"mesh_exported":false,"export_table":28,"probe_endpoint":null,"probe_reason":"cache_unavailable","next_probe_epoch":null,"last_switch_epoch":null,"last_export_change_epoch":null,"generated_at_epoch":null,"remote_mesh_exit_node":null,"remote_mesh_exit_ip":null,"remote_mesh_next_hop":null,"remote_mesh_interface":null,"remote_mesh_metric":null,"candidates":[]}'
+fi

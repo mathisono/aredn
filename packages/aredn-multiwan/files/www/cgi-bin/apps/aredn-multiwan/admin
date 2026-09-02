@@ -1,0 +1,2 @@
+#!/bin/sh
+printf 'Status: 302 Found\r\nLocation: /a/multiwan\r\nCache-Control: no-store\r\n\r\n'

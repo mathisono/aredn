@@ -1,0 +1,97 @@
+#!/bin/sh
+# Resolve the AREDN node that originated the installed Babel default in table 22.
+# Output: available|node|origin_ip|next_hop|interface|metric
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+BABEL_SOCKET="${BABEL_SOCKET:-/var/run/babel.sock}"
+HOSTS_DIR="${HOSTS_DIR:-/var/run/arednlink/hosts}"
+SOCAT_BIN="${SOCAT_BIN:-socat}"
+IP_BIN="${IP_BIN:-ip}"
+
+dump="$({ printf 'dump-installed-routes\nquit\n'; } | "$SOCAT_BIN" -T 5 -t 5 "UNIX-CLIENT:$BABEL_SOCKET" - 2>/dev/null || true)"
+route="$(printf '%s\n' "$dump" | awk '
+    $1 == "add" && $2 == "route" {
+        prefix = installed = id = metric = nexthop = table = iface = ""
+        for (i = 1; i <= NF; i++) {
+            if ($i == "prefix") prefix = $(i + 1)
+            else if ($i == "installed") installed = $(i + 1)
+            else if ($i == "id") id = $(i + 1)
+            else if ($i == "metric") metric = $(i + 1)
+            else if ($i == "nexthop") nexthop = $(i + 1)
+            else if ($i == "table") table = $(i + 1)
+            else if ($i == "if") iface = $(i + 1)
+        }
+        if (prefix == "0.0.0.0/0" && installed == "yes" && table == "22") {
+            print id "|" nexthop "|" iface "|" metric
+            exit
+        }
+    }
+')"
+
+if [ -z "$route" ]; then
+    # The installed table-22 route is the authoritative availability signal.
+    # Some Babel control-socket versions omit table metadata, so retain useful
+    # live state even when the route origin cannot be resolved from the dump.
+    ip_route="$("$IP_BIN" -4 route show table 22 default 2>/dev/null | awk '$1 == "default" { print; exit }')"
+    if [ -z "$ip_route" ]; then
+        printf '0|||||\n'
+        exit 0
+    fi
+    next_hop="$(printf '%s\n' "$ip_route" | awk '{ for (i = 1; i <= NF; i++) if ($i == "via") { print $(i + 1); exit } }')"
+    interface="$(printf '%s\n' "$ip_route" | awk '{ for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')"
+    metric="$(printf '%s\n' "$ip_route" | awk '{ for (i = 1; i <= NF; i++) if ($i == "metric") { print $(i + 1); exit } }')"
+    printf '1|Unknown||%s|%s|%s\n' "$next_hop" "$interface" "$metric"
+    exit 0
+fi
+
+old_ifs="$IFS"; IFS='|'; set -- $route; IFS="$old_ifs"
+origin_id="$1"; next_hop="${2:-}"; interface="${3:-}"; metric="${4:-}"
+origin_ip=
+node=
+origin_ips="$(printf '%s\n' "$dump" | awk -v wanted_id="$origin_id" '
+    $1 == "add" && $2 == "route" {
+        prefix = installed = id = ""
+        for (i = 1; i <= NF; i++) {
+            if ($i == "prefix") prefix = $(i + 1)
+            else if ($i == "installed") installed = $(i + 1)
+            else if ($i == "id") id = $(i + 1)
+        }
+        if (installed == "yes" && id == wanted_id && prefix ~ /^[0-9.]+\/32$/) {
+            sub(/\/32$/, "", prefix)
+            print prefix
+        }
+    }
+')"
+
+for file in "$HOSTS_DIR"/*
+do
+    [ -f "$file" ] || continue
+    while IFS='|' read -r candidate_ip candidate_node
+    do
+        [ -n "$candidate_ip" ] || continue
+        if printf '%s\n' "$origin_ips" | grep -Fqx "$candidate_ip"; then
+            origin_ip="$candidate_ip"
+            node="$candidate_node"
+            break 2
+        fi
+    done <<EOF
+$(awk '
+    /^##[0-9.]+##$/ {
+        section_ip = $0
+        sub(/^##/, "", section_ip)
+        sub(/##$/, "", section_ip)
+        next
+    }
+    section_ip != "" && $1 == section_ip {
+        print section_ip "|" $2
+        section_ip = ""
+    }
+' "$file")
+EOF
+done
+
+[ -n "$node" ] || node=Unknown
+printf '1|%s|%s|%s|%s|%s\n' "$node" "$origin_ip" "$next_hop" "$interface" "$metric"

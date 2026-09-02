@@ -1,0 +1,97 @@
+{%
+function readPolicyStatus() { const v = fs.readfile("/tmp/wan-sla/status.json"); if (!v) return null; try { return json(v); } catch (_) { return null; } }
+function wan1Transport()
+{
+    const radio0 = uciMesh.get("setup", "globals", "radio0_mode") || "";
+    const radio1 = uciMesh.get("setup", "globals", "radio1_mode") || "";
+    if (radio0 === "wan" && radio1 === "wan") return "invalid radios";
+    if (radio0 === "wan") return "Wi-Fi wlan0";
+    if (radio1 === "wan") return "Wi-Fi wlan1";
+    return "Ethernet";
+}
+function ifaceState(name)
+{
+    try {
+        const state = ubus.call(`network.interface.${name}`, "status");
+        const addresses = (state && state["ipv4-address"]) || [];
+        return { up: state && state.up === true, device: state && (state.l3_device || state.device) || "", address: length(addresses) ? addresses[0].address : "", gateway: state && state.route && length(state.route) ? state.route[0].nexthop || "" : "" };
+    } catch (_) { return { up: false, device: "", address: "", gateway: "" }; }
+}
+function candidate(name) { const list = s && s.candidates || []; for (let i = 0; i < length(list); i++) if (list[i].name === name) return list[i]; return null; }
+function healthClass(c, enabled) { if (!enabled) return "pw-status-off"; if (!c) return "pw-status-unknown"; return c.healthy ? "pw-status-ok" : "pw-status-bad"; }
+function healthText(c, enabled) { if (!enabled) return "Disabled"; if (!c) return "Unknown"; return c.healthy ? "Healthy" : "Down"; }
+function labelPath(value) { return value === "wan" ? "WAN 1" : value === "wan2" ? "WAN 2" : value === "wan3" ? "Android USB tether" : value === "mesh" ? "Remote Mesh WAN" : "Unknown"; }
+function preferredOrder()
+{
+    let value = "";
+    const defaults = [ "wan", "wan2", "wan3", "mesh" ];
+    for (let i = 1; i <= 4; i++) {
+        if (value) value += " → ";
+        value += labelPath(uciMesh.get("aredn", "multiwan", `priority_${i}`) || defaults[i - 1]);
+    }
+    return value;
+}
+function liveMeshExit()
+{
+    const f = fs.popen("/usr/local/bin/wan-mesh-exit 2>/dev/null");
+    if (!f) return { available: false, node: "", nextHop: "", device: "", metric: "" };
+    const parts = split(trim(f.read("all") || ""), "|");
+    f.close();
+    return { available: parts[0] === "1", node: parts[1] === "Unknown" ? "" : parts[1] || "", nextHop: parts[3] || "", device: parts[4] || "", metric: parts[5] || "" };
+}
+const s = readPolicyStatus();
+const enabled = uciMesh.get("aredn", "multiwan", "enabled") === "1";
+const active = s && s.active || uciMesh.get("aredn", "multiwan", "active") || "wan";
+const wan1 = ifaceState("wan");
+const wan2 = ifaceState("wan2");
+const c1 = candidate("wan");
+const c2 = candidate("wan2");
+const c3 = candidate("wan3");
+const cm = candidate("mesh");
+const wan1Enabled = uciMesh.get("aredn", "multiwan", "wan_enable") !== "0";
+const wan2Enabled = uciMesh.get("aredn", "multiwan", "wan2_enable") === "1";
+const meshEnabled = uciMesh.get("aredn", "multiwan", "mesh_enable") === "1";
+const liveMesh = liveMeshExit();
+const meshAvailable = liveMesh.available || (s && s.remote_mesh_default === true);
+const meshExitNode = liveMesh.node || (s && s.remote_mesh_exit_node) || "Origin not identified";
+const meshNextHop = liveMesh.nextHop || (s && s.remote_mesh_next_hop) || "Unknown";
+const meshDevice = liveMesh.device || (s && s.remote_mesh_interface) || "Unknown";
+const meshMetric = liveMesh.metric || (s && s.remote_mesh_metric) || "Unknown";
+const meshCandidateState = !meshEnabled ? "Not enabled as a candidate" : cm && cm.selection_healthy ? (active === "mesh" ? "Active" : "Standby") : "Unavailable";
+const meshEligibility = cm && (cm.probe_reason || cm.reason) || (meshEnabled ? "Not evaluated" : "Route is not enabled");
+%}
+<section id="wan-card-1" class="pw-card pw-card-main {{healthClass(c1, wan1Enabled)}} {{active === "wan" ? "pw-status-active" : ""}}" aria-labelledby="pw-wan1-title">
+    <div class="pw-card-head"><h2 id="pw-wan1-title">WAN 1</h2><span class="pw-badge"><span class="pw-status-dot"></span>{{active === "wan" ? "Active" : "Standby"}}</span></div>
+    <div class="pw-muted">{{wan1Transport()}}</div>
+    <div class="pw-meta-grid">
+        <div class="pw-label">State</div><div class="pw-value">{{healthText(c1, wan1Enabled)}}</div>
+        <div class="pw-label">IPv4</div><div class="pw-value">{{wan1.address || "Absent"}}</div>
+        <div class="pw-label">Detail</div><div class="pw-value">{{c1 && c1.reason || "Not evaluated"}}</div>
+    </div>
+</section>
+<section id="wan-card-2" class="pw-card pw-card-main {{healthClass(c2, wan2Enabled)}} {{active === "wan2" ? "pw-status-active" : ""}}" aria-labelledby="pw-wan2-title">
+    <div class="pw-card-head"><h2 id="pw-wan2-title">WAN 2</h2><span class="pw-badge"><span class="pw-status-dot"></span>{{active === "wan2" ? "Active" : "Standby"}}</span></div>
+    <div class="pw-muted">Ethernet</div>
+    <div class="pw-meta-grid">
+        <div class="pw-label">State</div><div class="pw-value">{{healthText(c2, wan2Enabled)}}</div>
+        <div class="pw-label">IPv4</div><div class="pw-value">{{wan2.address || "Absent"}}</div>
+        <div class="pw-label">Detail</div><div class="pw-value">{{c2 && c2.reason || "Not evaluated"}}</div>
+    </div>
+</section>
+{{_R("usb-wan")}}
+<section id="mesh-card" class="pw-card pw-card-main {{active === "mesh" ? "pw-status-active" : healthClass(cm, meshEnabled)}}" aria-labelledby="pw-mesh-title">
+    <div class="pw-card-head"><h2 id="pw-mesh-title">Remote Mesh WAN</h2><span class="pw-badge"><span class="pw-status-dot"></span>{{active === "mesh" ? "Active" : meshAvailable ? "Available" : "No advertised exit"}}</span></div>
+    <div class="pw-meta-grid">
+        <div class="pw-label">State</div><div class="pw-value">{{meshCandidateState}}</div>
+        <div class="pw-label">Exit</div><div class="pw-value">{{meshAvailable ? meshExitNode : "No table 22 default"}}</div>
+        <div class="pw-label">Path</div><div class="pw-value">{{meshAvailable ? meshNextHop + " via " + meshDevice + " · metric " + meshMetric : meshEligibility}}</div>
+    </div>
+</section>
+<section id="wan-policy" class="ctrl pw-card pw-card-wide pw-card-clickable" hx-get="status/e/wan-policy" hx-target="#ctrl-modal" hx-swap="innerHTML" tabindex="0" aria-labelledby="pw-policy-title">
+    <div class="pw-card-head"><h2 id="pw-policy-title">Route Policy Setup</h2><span class="pw-configure">Configure</span></div>
+    <div class="pw-meta-grid">
+        <div class="pw-label">Policy</div><div class="pw-value">{{enabled ? "Ordered failover" : "Disabled"}}</div>
+        <div class="pw-label">Preferred order</div><div class="pw-value">{{preferredOrder()}}</div>
+        <div class="pw-label">Active</div><div class="pw-value">{{labelPath(active)}}</div>
+    </div>
+</section>

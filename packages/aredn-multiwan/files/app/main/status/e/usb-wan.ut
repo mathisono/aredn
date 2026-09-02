@@ -1,0 +1,72 @@
+{%
+import * as pollywan from "aredn.pollywan";
+
+const supportedBoards = { "mikrotik,routerboard-952ui-5ac2nd": true, "mikrotik,hap-ac2": true, "mikrotik,hap-ac3": true };
+if (!auth.isAdmin) { response.statusCode = 403; print("Administrator authentication required"); return; }
+if (!supportedBoards[hardware.getBoardModel().id]) { response.statusCode = 404; print("USB WAN is not available on this device"); return; }
+
+function readState() { const v = fs.readfile("/tmp/wan3/state.json"); if (!v) return null; try { return json(v); } catch (_) { return null; } }
+
+let message = "";
+let error = "";
+if (request.env.REQUEST_METHOD === "PUT") {
+    const action = request.args.action || "apply";
+    if (action === "apply") {
+        const device = request.args.wan3_device || "auto";
+        if (device !== "auto" && !match(device, /^[A-Za-z0-9_.:-]+$/)) error = "USB interface must be auto or a valid Linux network-interface name";
+        else {
+            const saved = pollywan.save("usb", { wan3_device: device }, uciMesh);
+            if (!saved.ok) error = saved.error;
+            else if (uciMesh.get("aredn", "multiwan", "enabled") === "1" && uciMesh.get("aredn", "multiwan", "wan3_enable") === "1") {
+                const rc = system("mkdir -p /tmp/wan3; /usr/local/bin/wan3-manager usb-apply >/tmp/wan3/gui-apply.log 2>&1");
+                if (rc === 0) {
+                    system("/usr/local/bin/wan-sla once >/dev/null 2>&1 &");
+                    message = "USB device selection saved, verified, and applied";
+                }
+                else error = "USB device selection was saved and verified, but could not be applied";
+            }
+            else message = "USB device selection saved and verified; Route Policy Setup controls whether WAN 3 is enabled";
+        }
+    }
+    else error = "Invalid USB WAN action";
+}
+if (request.env.REQUEST_METHOD === "DELETE") {
+    configuration.revertModalChanges();
+    print(_R("changes"));
+    return;
+}
+if (message) configuration.prepareModalChanges();
+
+const enabled = uciMesh.get("aredn", "multiwan", "wan3_enable") === "1";
+const state = readState();
+let iface = null;
+try { iface = ubus.call("network.interface.wan3", "status"); } catch (_) {}
+const addresses = (iface && iface["ipv4-address"]) || [];
+const address = length(addresses) ? addresses[0].address : "";
+const device = iface && (iface.l3_device || iface.device) || state && state.device || "";
+const routes = iface && iface.route || [];
+let gateway = "";
+for (let i = 0; i < length(routes); i++) if (routes[i].target === "0.0.0.0") { gateway = routes[i].nexthop || ""; break; }
+const linkState = iface && iface.up ? "up" : "down";
+let statusText = "Disabled";
+if (enabled) {
+    if (!device) statusText = state && match(state.message || "", /kernel USB-network support/) ? "No compatible USB network driver" : "Waiting for phone";
+    else if (!iface) statusText = "USB device detected";
+    else if (!length(addresses)) statusText = "Requesting DHCP";
+    else statusText = "Connected";
+}
+%}
+<div class="dialog pollywan-dialog">
+    {{_R("dialog-header", "WAN 3: Android USB tether")}}
+    <div>
+        {% if (error) { %}<div class="pw-notice pw-notice-error"><b>{{error}}</b></div>{% } else if (message) { %}<div class="pw-notice pw-notice-ok">{{message}}</div>{% } %}
+        <div class="cols"><div><div class="o">State</div><div class="m">{{state && state.message || "Connect a phone and enable USB tethering"}}</div></div><div style="flex:0;text-align:right"><div>{{statusText}}</div><div class="m">{{device || "no device"}} &middot; {{address || "no IPv4"}}</div></div></div>
+        <form id="usb-wan-form">
+            <div class="cols"><div><div class="o">hAP USB network interface</div><div class="m">Use auto, or enter the exact existing RNDIS/CDC interface; PollyWAN does not replace kernel modules or consider serial GPS TTYs</div></div><div style="flex:0"><input name="wan3_device" type="text" size="18" pattern="auto|[A-Za-z0-9_.:\-]+" value="{{uciMesh.get("aredn", "multiwan", "wan3_device") || "auto"}}" required></div></div>
+        </form>
+        {{_H("Use a data-capable cable and enable USB tethering on the Android phone.")}}
+        <div class="pw-actions"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#usb-wan-form" hx-vals='{"action":"apply"}'>Apply</button></div>
+    </div>
+    {{_R("dialog-footer")}}
+    <script>(function(){ {{_R("open")}} htmx.on("#dialog-done", "click", _ => htmx.ajax("GET", "/a/u-usb-wan", { target: "#usb-wan", swap: "outerHTML" })); })();</script>
+</div>

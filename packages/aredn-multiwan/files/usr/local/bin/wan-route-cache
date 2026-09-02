@@ -1,0 +1,148 @@
+#!/bin/sh
+# Preserve each WAN's netifd-learned connected route and default in an
+# independent table. Source-policy rules make bound health/calibration probes
+# stay on the requested WAN even while another local WAN owns the default.
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+IP_BIN="${IP_BIN:-ip}"
+
+STATE_DIR=/tmp/wan-route-cache
+mkdir -p "$STATE_DIR" || exit 1
+
+valid_name()
+{
+    case "$1" in ''|*[!A-Za-z0-9_.:-]*) return 1 ;; *) return 0 ;; esac
+}
+
+valid_ipv4()
+{
+    printf '%s\n' "$1" | awk -F. '
+        NF != 4 { bad = 1 }
+        { for (i = 1; i <= 4; i++) if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) bad = 1 }
+        END { exit bad }
+    '
+}
+
+connected_prefix_from_cidr()
+{
+    printf '%s\n' "$1" | awk -F'[./]' '
+        NF != 5 { exit 1 }
+        {
+            for (i = 1; i <= 5; i++) if ($i !~ /^[0-9]+$/) exit 1
+            if ($1 > 255 || $2 > 255 || $3 > 255 || $4 > 255 || $5 < 0 || $5 > 32) exit 1
+            addr = (($1 * 256 + $2) * 256 + $3) * 256 + $4
+            hostbits = 32 - $5
+            block = 1
+            for (i = 0; i < hostbits; i++) block *= 2
+            net = int(addr / block) * block
+            o1 = int(net / 16777216); net -= o1 * 16777216
+            o2 = int(net / 65536); net -= o2 * 65536
+            o3 = int(net / 256); o4 = net - o3 * 256
+            printf "%d.%d.%d.%d/%d\n", o1, o2, o3, o4, $5
+        }
+    '
+}
+
+wan_values()
+{
+    case "$1" in
+        wan)  printf '101|81\n' ;;
+        wan2) printf '102|82\n' ;;
+        wan3) printf '103|83\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+remove_source_rule()
+{
+    name="$1"
+    values="$(wan_values "$name")" || return 0
+    old_ifs="$IFS"; IFS='|'; set -- $values; IFS="$old_ifs"
+    table="$1"; pref="$2"
+    state="$STATE_DIR/$name.source"
+    old_source="$(cat "$state" 2>/dev/null || true)"
+    if valid_ipv4 "$old_source"; then
+        while "$IP_BIN" -4 rule del pref "$pref" from "$old_source/32" lookup "$table" >/dev/null 2>&1; do :; done
+    fi
+    # Also remove a stale rule when the state file was lost.
+    while "$IP_BIN" -4 rule del pref "$pref" lookup "$table" >/dev/null 2>&1; do :; done
+    rm -f "$state"
+}
+
+connected_prefix()
+{
+    device="$1"
+    source="$2"
+    prefix="$("$IP_BIN" -4 route show table all dev "$device" scope link 2>/dev/null | \
+        awk -v source="$source" '
+            function cidr_prefix(value, parts) {
+                return split(value, parts, "/") == 2 && parts[1] ~ /^[0-9.]+$/ && parts[2] ~ /^[0-9]+$/
+            }
+            cidr_prefix($1) && $0 ~ ("src " source) { print $1; exit }
+        ')"
+    [ -n "$prefix" ] || prefix="$("$IP_BIN" -4 addr show dev "$device" 2>/dev/null | awk '/ inet / { print $2; exit }' | {
+        read cidr || true
+        [ -n "$cidr" ] && connected_prefix_from_cidr "$cidr" 2>/dev/null || true
+    })"
+    printf '%s\n' "$prefix"
+}
+
+cache_one()
+{
+    name="$1"
+    values="$(wan_values "$name")" || return 1
+    old_ifs="$IFS"; IFS='|'; set -- $values; IFS="$old_ifs"
+    table="$1"; pref="$2"
+
+    status="$(ubus call "network.interface.$name" status 2>/dev/null)" || { remove_source_rule "$name"; return 0; }
+    up="$(printf '%s' "$status" | jsonfilter -e '@.up' 2>/dev/null || true)"
+    [ "$up" = true ] || [ "$up" = 1 ] || { remove_source_rule "$name"; return 0; }
+
+    device="$(printf '%s' "$status" | jsonfilter -e '@.l3_device' 2>/dev/null || true)"
+    source="$(printf '%s' "$status" | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null || true)"
+    gateway="$(printf '%s' "$status" | jsonfilter -e "@.route[@.target='0.0.0.0'].nexthop" 2>/dev/null | head -n 1 || true)"
+    [ -n "$gateway" ] || gateway="$(printf '%s' "$status" | jsonfilter -e "@.inactive.route[@.target='0.0.0.0'].nexthop" 2>/dev/null | head -n 1 || true)"
+
+    valid_name "$device" || { remove_source_rule "$name"; return 0; }
+    valid_ipv4 "$source" || { remove_source_rule "$name"; return 0; }
+
+    # netifd owns table 103 for the dynamic USB interface. Rebuild only the
+    # package-owned Ethernet tables, but install source rules for all three.
+    if [ "$name" != wan3 ]; then
+        "$IP_BIN" -4 route flush table "$table" >/dev/null 2>&1 || true
+        prefix="$(connected_prefix "$device" "$source")"
+        case "$prefix" in
+            *.*/*) "$IP_BIN" -4 route replace table "$table" "$prefix" dev "$device" src "$source" scope link proto static >/dev/null 2>&1 || true ;;
+        esac
+
+        if valid_ipv4 "$gateway"; then
+            "$IP_BIN" -4 route replace table "$table" default via "$gateway" dev "$device" src "$source" metric 10 onlink proto static >/dev/null 2>&1 || true
+        else
+            "$IP_BIN" -4 route replace table "$table" default dev "$device" src "$source" metric 10 proto static >/dev/null 2>&1 || true
+        fi
+    fi
+
+    remove_source_rule "$name"
+    "$IP_BIN" -4 rule add pref "$pref" from "$source/32" lookup "$table" >/dev/null 2>&1 || true
+    printf '%s\n' "$source" > "$STATE_DIR/$name.source"
+}
+
+remove_all()
+{
+    for name in wan wan2 wan3; do remove_source_rule "$name"; done
+    "$IP_BIN" -4 route flush table 101 >/dev/null 2>&1 || true
+    "$IP_BIN" -4 route flush table 102 >/dev/null 2>&1 || true
+}
+
+case "${1:-all}" in
+    wan|wan2|wan3) cache_one "$1" ;;
+    all)
+        cache_one wan
+        cache_one wan2
+        cache_one wan3
+        ;;
+    remove|stop) remove_all ;;
+    *) exit 2 ;;
+esac

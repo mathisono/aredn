@@ -1,0 +1,92 @@
+{%
+function labelPath(value) { return value === "wan" ? "WAN 1" : value === "wan2" ? "WAN 2" : value === "wan3" ? "Android USB tether" : value === "mesh" ? "Remote Mesh WAN" : "Unknown"; }
+function readPolicyStatus() { const v = fs.readfile("/tmp/wan-sla/status.json"); if (!v) return null; try { return json(v); } catch (_) { return null; } }
+function activeCandidate(status)
+{
+    const list = status && status.candidates || [];
+    for (let i = 0; i < length(list); i++) if (list[i].name === status.active) return list[i];
+    return null;
+}
+function runtimeState(enabled, status)
+{
+    // These states map to actual wan-sla files, schema-2 fields, and messages.
+    // Do not advertise a state unless the controller can really produce it.
+    if (!enabled) return { name: "Disabled", detail: "Controller is inert", tone: "pw-state-off" };
+    if (fs.access("/tmp/wan-port-manager/pending-token")) return { name: "Port change pending", detail: "Confirm or roll back the Ethernet role change", tone: "pw-state-warn" };
+    if (fs.access("/tmp/wan-sla/inhibit")) return { name: "Paused", detail: "Route evaluation is temporarily inhibited", tone: "pw-state-warn" };
+    if (fs.access("/tmp/wan-sla/.lock")) return { name: "Evaluating", detail: "Checking enabled routes now", tone: "pw-state-info" };
+    if (!status) return { name: "Starting", detail: "Waiting for the first controller result", tone: "pw-state-info" };
+    if (status.enabled === false) return { name: "Starting", detail: "Waiting for the enabled controller to publish its first result", tone: "pw-state-info" };
+
+    const standbyInterval = int(uciMesh.get("aredn", "multiwan", "standby_health_interval") || 90);
+    const generated = int(status.generated_at_epoch || 0);
+    if (generated > 0 && int(time()) - generated > standbyInterval * 2 + 30)
+        return { name: "Status stale", detail: "The controller status is older than two evaluation intervals", tone: "pw-state-bad" };
+
+    const message = status.message || "No controller detail is available";
+    if (index(message, "invalid AREDN radio configuration") >= 0 || index(message, "route installation failed") >= 0)
+        return { name: "Configuration error", detail: message, tone: "pw-state-bad" };
+    if (index(message, "fallback candidate failed") >= 0)
+        return { name: "No eligible WAN", detail: message, tone: "pw-state-bad" };
+    if (index(message, "no enabled route is currently eligible") >= 0)
+        return { name: "No eligible WAN", detail: message, tone: "pw-state-bad" };
+    if (!status.active || status.active === "none")
+        return { name: "No eligible WAN", detail: message, tone: "pw-state-bad" };
+
+    const selected = activeCandidate(status);
+    if (selected && (int(selected.failure_count || 0) > 0 || selected.probe_reason === "probe_retry"))
+        return { name: "Failure pending", detail: "The active route failed a check but has not reached the failover threshold", tone: "pw-state-warn" };
+    if (index(message, "waiting for recovery confirmation") >= 0 || index(message, "retained until a higher-priority route") >= 0)
+        return { name: "Recovery pending", detail: message, tone: "pw-state-warn" };
+    if (index(message, "hard failure or ineligible path: selected") >= 0)
+        return { name: "Failed over", detail: message, tone: "pw-state-warn" };
+    if (index(message, "promoted ") >= 0)
+        return { name: "Recovered", detail: message, tone: "pw-state-ok" };
+    if (status.active_health === "healthy")
+        return { name: "Healthy", detail: message, tone: "pw-state-ok" };
+    if (status.active_health === "unhealthy")
+        return { name: "Degraded", detail: message, tone: "pw-state-warn" };
+    return { name: "Starting", detail: message, tone: "pw-state-info" };
+}
+const enabled = uciMesh.get("aredn", "multiwan", "enabled") === "1";
+const status = readPolicyStatus();
+const active = status && status.active || uciMesh.get("aredn", "multiwan", "active") || "wan";
+const release = "r29.5";
+const currentRuntime = runtimeState(enabled, status);
+const activeSummary = !enabled || currentRuntime.name === "No eligible WAN" ? "None" : labelPath(active);
+%}
+<div id="multiwan-page" class="pw-page" hx-get="u-multiwan" hx-trigger="every 10s [document.visibilityState === 'visible']" hx-swap="outerHTML">
+    <header class="pw-hero">
+        <div class="pw-title-row">
+            <div>
+                <h1>PollyWAN</h1>
+                <p class="pw-subtitle">Ordered multi-WAN routing for AREDN</p>
+            </div>
+            <div class="pw-muted">Refreshes every 10 seconds</div>
+        </div>
+        <div class="pw-badges" aria-label="PollyWAN summary">
+            <span class="pw-badge {{enabled ? "pw-status-ok" : "pw-status-off"}}"><span class="pw-status-dot"></span>Controller {{enabled ? "Enabled" : "Disabled"}}</span>
+            <span class="pw-badge {{activeSummary === "None" ? "pw-status-off" : "pw-status-active"}}"><span class="pw-status-dot"></span>Active: {{activeSummary}}</span>
+            <span class="pw-badge">Ordered failover</span>
+            <span class="pw-badge">{{release}}</span>
+        </div>
+        <div class="pw-state-strip" aria-label="Current operating state">
+            <span class="pw-state-item pw-state-current {{currentRuntime.tone}}"><span class="pw-status-dot"></span>{{currentRuntime.name}}</span>
+            <span class="pw-state-detail">{{currentRuntime.detail}}</span>
+        </div>
+    </header>
+    <div class="pw-grid">
+    {{_R("wan-policy")}}
+    {{_R("ethernet-ports")}}
+    {{_R("link-calibration")}}
+        <section class="pw-card pw-card-full" aria-labelledby="pw-doc-title">
+            <div class="pw-card-head">
+                <div>
+                    <h2 id="pw-doc-title">Documentation</h2>
+                    <div class="pw-muted">Port roles, USB tethering, route policy, GPS safety, verification, and recovery.</div>
+                </div>
+                <a class="pw-doc-link" target="_blank" href="/apps/aredn-multiwan/help.html">Open setup and recovery guide</a>
+            </div>
+        </section>
+    </div>
+</div>
