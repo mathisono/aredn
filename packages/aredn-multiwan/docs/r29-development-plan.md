@@ -325,7 +325,10 @@ source-bound HTTPS qualification, WAN 1 was selected into table 26, the
 table-99 tunnel guard remained installed, and no rollback token remained.
 GPS `/dev/ttyACM0` and gpsd stayed active. Checksummed pre-r7, pre-r8, and pre-r9
 backups are retained on MSE-88; pre-r9 and post-r9 persistent configuration
-hashes are identical.
+hashes are identical. A final clean reboot also passed: the r9 package,
+authoritative enable flags, managed port marker, WAN 1 table-26 route, SLA
+daemon, GPS TTY/gpsd, and no-pending-rollback state all returned, and every
+authenticated GUI page rendered HTTP 200 after boot.
 
 USB mass-storage reattach remains an external validation item, not a passed
 test. At checkpoint time the workstation, MSE-88, and hAP exposed no removable
