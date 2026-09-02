@@ -1,7 +1,8 @@
 #!/bin/sh
-# Keep AREDN tunnel interfaces on mesh routes only. Internet defaults in
-# tables 26, 28 and 22 must never be reachable from a WireGuard/tun ingress,
-# and Babel must neither learn nor send 0.0.0.0/0 on those interfaces.
+# Keep AREDN tunnel ingress on mesh routes only. Internet defaults in tables
+# 26, 28 and 22 must never be reachable by traffic arriving from WireGuard/tun.
+# Babel may learn a remote default on a tunnel for this node's Remote Mesh WAN,
+# but this node must never send an IPv4 or IPv6 default back over that tunnel.
 
 set -u
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
@@ -92,7 +93,7 @@ install_babel_file_if_changed()
     fi
 
     # Do not start Babel early during boot. If it is already running, restart
-    # so the generated in/out default-route filters take effect immediately.
+    # so the generated outbound default-route filters take effect immediately.
     if pidof babeld >/dev/null 2>&1 && [ -x /etc/init.d/babel ]; then
         (/etc/init.d/babel restart >/dev/null 2>&1) &
     fi
@@ -132,11 +133,9 @@ apply_guard()
                 printf '%s\n' 'redistribute proto 3 ip 0.0.0.0/0 eq 0 deny'
             fi
             if [ -n "$devices" ]; then
-                printf '%s\n' '# Tunnel peers may exchange mesh routes, but never an Internet default.'
+                printf '%s\n' '# Remote defaults may be learned, but this node never advertises a default over a tunnel.'
                 for dev in $devices; do
-                    printf 'in if %s ip 0.0.0.0/0 eq 0 deny\n' "$dev"
                     printf 'out if %s ip 0.0.0.0/0 eq 0 deny\n' "$dev"
-                    printf 'in if %s ip ::/0 eq 0 deny\n' "$dev"
                     printf 'out if %s ip ::/0 eq 0 deny\n' "$dev"
                 done
             fi

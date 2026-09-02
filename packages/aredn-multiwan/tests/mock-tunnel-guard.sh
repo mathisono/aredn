@@ -35,7 +35,9 @@ IP_BIN=/usr/bin/ip chroot "$ROOT" /usr/local/bin/wan-tunnel-guard apply
 grep -F 'rule add pref 45 iif wg-test lookup 99' "$ROOT/tmp/ip.log" >/dev/null
 grep -F 'rule add pref 45 iif tun5 lookup 99' "$ROOT/tmp/ip.log" >/dev/null
 grep -F 'redistribute proto 3 ip 0.0.0.0/0 eq 0 deny' "$ROOT/etc/aredn_include/babel-deny.conf" >/dev/null
-grep -F 'in if wg-test ip 0.0.0.0/0 eq 0 deny' "$ROOT/etc/aredn_include/babel-deny.conf" >/dev/null
+! grep -F 'in if wg-test ip 0.0.0.0/0 eq 0 deny' "$ROOT/etc/aredn_include/babel-deny.conf" >/dev/null
+grep -F 'out if wg-test ip 0.0.0.0/0 eq 0 deny' "$ROOT/etc/aredn_include/babel-deny.conf" >/dev/null
+! grep -F 'in if tun5 ip ::/0 eq 0 deny' "$ROOT/etc/aredn_include/babel-deny.conf" >/dev/null
 grep -F 'out if tun5 ip ::/0 eq 0 deny' "$ROOT/etc/aredn_include/babel-deny.conf" >/dev/null
 printf '0\n' > "$ROOT/tmp/enabled"
 IP_BIN=/usr/bin/ip chroot "$ROOT" /usr/local/bin/wan-tunnel-guard apply

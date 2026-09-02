@@ -144,19 +144,20 @@ This prevents stale DHCP, a transient stock hotplug route, or a weak link from r
 
 ## Tunnel Internet guard
 
-Tunnel interfaces may carry AREDN mesh routes, but they must not use this node as an Internet exit and must not carry a Babel default route.
+Tunnel interfaces may carry AREDN mesh routes and an incoming Babel default may
+be learned for this node's Remote Mesh WAN candidate. Traffic arriving from a
+tunnel must not use this node as an Internet exit, and this node must not
+advertise an IPv4 or IPv6 default back over a tunnel.
 
 The package enforces this as a hard policy, not a user toggle:
 
 1. For every `wg*` or `tun*` interface, install IPv4 and IPv6 rules at preference 45 that look up table 99.
 2. Existing AREDN IPv4 mesh lookups at preferences 10, 20 and 30 still happen first.
-3. The blackhole happens before table 26, table 28 and table 22; tunnel IPv6 also has no path to an Internet default.
-4. Add managed Babel filters to `/etc/aredn_include/babel-deny.conf`:
+3. The blackhole happens before table 26, table 28 and table 22; tunnel IPv6 also has no path to an Internet default. This applies to forwarded tunnel ingress, not locally originated traffic using a learned table-22 route.
+4. Add managed outbound Babel filters to `/etc/aredn_include/babel-deny.conf`:
 
    ```text
-   in if <tunnel> ip 0.0.0.0/0 eq 0 deny
    out if <tunnel> ip 0.0.0.0/0 eq 0 deny
-   in if <tunnel> ip ::/0 eq 0 deny
    out if <tunnel> ip ::/0 eq 0 deny
    ```
 

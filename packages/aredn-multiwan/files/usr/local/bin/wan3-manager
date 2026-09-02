@@ -556,8 +556,9 @@ restore_stock()
     /usr/local/bin/wan-route-cache remove >/dev/null 2>&1 || true
 
     if [ "$(uci_get enabled)" = 1 ]; then
-        # Hard package policy while PollyWAN is enabled: tunnels retain mesh
-        # routes but never use a local or remote Internet default.
+        # Hard package policy while PollyWAN is enabled: traffic arriving on a
+        # tunnel retains mesh routes but cannot use any Internet default. Babel
+        # may still learn a remote default for this node's Remote Mesh WAN.
         /usr/local/bin/wan-tunnel-guard apply >/dev/null 2>&1 || true
     else
         /usr/local/bin/wan-tunnel-guard remove >/dev/null 2>&1 || true

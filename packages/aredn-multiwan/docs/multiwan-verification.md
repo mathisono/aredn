@@ -31,7 +31,7 @@ make MAINTARGET=ath79 SUBTARGET=mikrotik prepare
 grep '^CONFIG_PACKAGE_aredn-multiwan=m$' openwrt/.config
 make -C openwrt package/aredn-multiwan/clean V=sc -j1
 make -C openwrt package/aredn-multiwan/compile V=sc -j1 2>&1 | tee /tmp/pollywan-r29.5-build.log
-find openwrt/bin -name 'aredn-multiwan-0.1.0.29.5-r9.apk' -print -exec sha256sum {} \;
+find openwrt/bin -name 'aredn-multiwan-0.1.0.29.5-r10.apk' -print -exec sha256sum {} \;
 ```
 
 If matching kernel-module APKs are unavailable, build the full exact target. Never mix architecture, firmware, or kernel ABI.
@@ -60,7 +60,7 @@ ip -4 route show table main > /tmp/pollywan-before/main
 Install without enabling:
 
 ```sh
-apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0.29.5-r9.apk
+apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0.29.5-r10.apk
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.enabled)" = 0 ]
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.port_roles_enabled)" = 0 ]
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.wan3_enable)" = 0 ]
@@ -251,7 +251,7 @@ Expected:
 
 ## 10. Tunnel isolation
 
-For every `wg*` and `tun*` interface, verify IPv4 and IPv6 preference 45 look up table 99. AREDN mesh route preferences 10/20/30 remain usable, but tunnel ingress cannot reach tables 26, 28, 22, or a main Internet default. Babel must neither learn nor advertise IPv4/IPv6 defaults on a tunnel.
+For every `wg*` and `tun*` interface, verify IPv4 and IPv6 preference 45 look up table 99. AREDN mesh route preferences 10/20/30 remain usable, but tunnel ingress cannot reach tables 26, 28, 22, or a main Internet default. Babel may learn an incoming IPv4 default into table 22 for this node's Remote Mesh WAN candidate, but it must not advertise IPv4 or IPv6 defaults back out a tunnel.
 
 ## 11. Android USB tether
 

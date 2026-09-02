@@ -88,7 +88,7 @@ done
 # Package metadata and optional-only target contract.
 require_text Makefile 'PKG_NAME:=aredn-multiwan'
 require_text Makefile 'PKG_VERSION:=0.1.0.29.5'
-require_text Makefile 'PKG_RELEASE:=9'
+require_text Makefile 'PKG_RELEASE:=10'
 require_text Makefile '/etc/init.d/uhttpd restart'
 require_text Makefile 'URL:=https://github.com/mathisono/AREDN_PollyWAN'
 reject_text Makefile '+ip-tiny'
@@ -236,7 +236,7 @@ require_text "$PORTS" "printf 'wifi:%s\\n'"
 require_text "$PORTS" 'invalid:both-radios'
 require_text "$PORTS" 'no Ethernet port may be assigned to WAN 1'
 require_text "$PORTS" 'our Ethernet WAN override'
-require_text "$PORTS" 'version=9'
+require_text "$PORTS" 'version=10'
 require_text "$PORTS" 'wan_transport='
 require_text "$PORTS" 'WAN 1 transport changed from'
 require_text "$PORTS" 'mikrotik,routerboard-952ui-5ac2nd) echo swconfig'
@@ -407,7 +407,9 @@ require_text "$GUARD" 'IP_BIN="${IP_BIN:-ip}"'
 require_text "$GUARD" '"$IP_BIN" -4 rule add pref "$RULE_PREF" iif "$dev" lookup "$BLACKHOLE_TABLE"'
 require_text "$GUARD" '"$IP_BIN" -6 rule add pref "$RULE_PREF" iif "$dev" lookup "$BLACKHOLE_TABLE"'
 require_text "$GUARD" 'redistribute proto 3 ip 0.0.0.0/0 eq 0 deny'
-require_text "$GUARD" 'in if %s ip 0.0.0.0/0 eq 0 deny'
+reject_text "$GUARD" 'in if %s ip 0.0.0.0/0 eq 0 deny'
+reject_text "$GUARD" 'in if %s ip ::/0 eq 0 deny'
+require_text "$GUARD" 'out if %s ip 0.0.0.0/0 eq 0 deny'
 require_text "$GUARD" 'out if %s ip ::/0 eq 0 deny'
 
 # Speed-test CLI boundary, route proof, bins, and data limits.
@@ -605,7 +607,7 @@ require_text SYNC_SOURCE 'sync_contract=standalone-root-equals-integration-subtr
 require_text tools/sync-integration.sh 'rsync -rnic --delete --exclude .git'
 
 # No obsolete/broken bootstrap or older release claims.
-if grep -RIn --exclude-dir=.git --exclude=SYNC_SOURCE --exclude=verify.sh -E 'source\.tar\.gz\.b64|chunk-0[0-9]|PKG_RELEASE:=(10|16|25)([^0-9]|$)|PollyWAN r(3|10|16|25)([^0-9]|$)|0\.1\.0-r(3|10|16|25)([^0-9]|$)|main contains r3([^0-9]|$)|incomplete source' . >/tmp/pollywan-stale.$$; then
+if grep -RIn --exclude-dir=.git --exclude=SYNC_SOURCE --exclude=verify.sh -E 'source\.tar\.gz\.b64|chunk-0[0-9]|PKG_RELEASE:=(16|25)([^0-9]|$)|PollyWAN r(3|16|25)([^0-9]|$)|0\.1\.0-r(3|16|25)([^0-9]|$)|main contains r3([^0-9]|$)|incomplete source' . >/tmp/pollywan-stale.$$; then
     cat /tmp/pollywan-stale.$$ >&2
     rm -f /tmp/pollywan-stale.$$
     fail 'stale release/bootstrap references remain'

@@ -15,7 +15,7 @@ PollyWAN is experimental and is not an official AREDN release.
 - supports AREDN node-to-node iperf3 and Cloudflare Internet-path tests
 - assigns hAP Ethernet roles with timed rollback and confirmation
 - supports optional Android USB tethering for WAN3
-- prevents tunnel interfaces from using local or remote Internet defaults
+- blocks traffic arriving from tunnels from using Internet defaults while allowing this node to learn a remote Mesh WAN default
 
 ## Supported hardware
 
@@ -23,9 +23,9 @@ PollyWAN is experimental and is not an official AREDN release.
 - MikroTik hAP ac2
 - MikroTik hAP ac3
 
-The current R29.5 test package uses APK version `0.1.0.29.5-r7`. APK reserves
+The current R29.5 test package uses APK version `0.1.0.29.5-r10`. APK reserves
 `-rN` for its integer package revision, so the product release is represented
-as dotted `PKG_VERSION` components and the package revision is `r7`. The latest
+as dotted `PKG_VERSION` components and the package revision is `r10`. The latest
 published GitHub release remains `0.1.0-r29` until R29.5 validation is complete.
 
 ## Release files
@@ -427,7 +427,7 @@ Then run:
 ./tests/verify.sh
 make -C openwrt package/aredn-multiwan/clean V=s
 make -C openwrt package/aredn-multiwan/compile V=s
-find openwrt/bin -name 'aredn-multiwan-0.1.0.29.5-r7.apk' -print -exec sha256sum {} \;
+find openwrt/bin -name 'aredn-multiwan-0.1.0.29.5-r10.apk' -print -exec sha256sum {} \;
 ```
 
 Static verification is not a substitute for exact kernel-ABI checks, disabled-install testing, port rollback testing, or physical hardware validation.
