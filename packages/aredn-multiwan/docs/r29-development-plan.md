@@ -279,6 +279,62 @@ Save/Apply/Restore presentation was superseded by r7.
   pending transaction, XLink rollback, validation rollback, RapidConfig
   activation, and interruption recovery.
 
+### R29.5 r9 major development checkpoint
+
+The 2026-09-02 release-candidate pass built from standalone code commit
+`414b35422467d7c6edd0ddda8cff36ff5b45687c` and integration commit
+`5768ece1926a83e2ab950936c9df40b5516a025b`. The stable AREDN 4.26.7.0 hAP
+ac2 build produced `aredn-multiwan-0.1.0.29.5-r9.apk` for
+`arm_cortex-a7_neon-vfpv4`, 73,572 bytes, with SHA-256
+`eb45d29b356aa14c721a490c08b625bff6673b8fb0b46fec91dbef9889f2a12a`.
+APK verification, metadata inspection, extracted-payload comparison,
+standalone verification, integration verification, and repository sync all
+passed.
+
+Live deployment on `KP4DJT-HAP-AC2-VAN` found two release-blocking defects that
+the source-only checks could not expose. The Ports & XLinks template used
+JavaScript-style `throw` syntax, which the target ucode compiler rejects; r8
+uses the supported `die()` exception and rejects that syntax in verification.
+The AREDN ucode handler also retained compiled pre-upgrade templates; r9
+schedules a uhttpd restart after an APK upgrade so the running GUI cannot keep
+serving an older page cache. Authenticated live requests confirmed that the r9
+restart occurred and all settings pages and summary partials compiled and
+returned HTTP 200.
+
+The live GUI transaction pass confirmed:
+
+- each settings page renders one Apply control with the normal AREDN Cancel and
+  Done footer, and the removed Ethernet ownership/policy controls are absent;
+- an invalid policy submission reports its HTTPS validation error and leaves
+  the persistent file unchanged;
+- an invalid XLink submission reports its error and restores the exact
+  pre-apply `aredn` and `xlink` file hashes;
+- valid Policy, USB, speed-test, port, DtD, and empty-XLink submissions match a
+  fresh persistent UCI read-back after commit;
+- protected port Apply temporarily reloads networking, returns with a rollback
+  token, and reaches `ready` only after GUI confirmation;
+- Cancel on every settings page preserves the post-Apply baseline and no
+  `/tmp/config.current` AREDN-wide pending transaction remains; and
+- Remote Mesh WAN always renders a concise state. This node currently has no
+  table-22 default, so the truthful live state is **No advertised exit** with
+  no path, while the direct-table fallback is covered by the resolver mock.
+
+The enabled configuration reconciled from its formerly inconsistent
+enabled/no-marker state to active managed ports. WAN 1 and WAN 2 both passed
+source-bound HTTPS qualification, WAN 1 was selected into table 26, the
+table-99 tunnel guard remained installed, and no rollback token remained.
+GPS `/dev/ttyACM0` and gpsd stayed active. Checksummed pre-r7, pre-r8, and pre-r9
+backups are retained on MSE-88; pre-r9 and post-r9 persistent configuration
+hashes are identical.
+
+USB mass-storage reattach remains an external validation item, not a passed
+test. At checkpoint time the workstation, MSE-88, and hAP exposed no removable
+block device. The hAP USB bus contained only the u-blox GPS receiver, with no
+mass-storage hotplug history, mount configuration, or installed USB-storage
+mount support. Recovery and remount must be tested after the intended device
+is physically reattached and identified; no storage device was unmounted,
+formatted, repaired, or otherwise changed during this pass.
+
 ### Ordered Route Policy Setup
 
 R29.5 replaces the Manual/Automatic and speed-ranked policy with one ordered
