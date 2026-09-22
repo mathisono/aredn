@@ -39,6 +39,55 @@ function liveMeshExit()
     f.close();
     return { available: parts[0] === "1", node: parts[1] === "Unknown" ? "" : parts[1] || "", nextHop: parts[3] || "", device: parts[4] || "", metric: parts[5] || "" };
 }
+function isIPv4(address)
+{
+    const octets = split(address || "", ".");
+    if (length(octets) !== 4) return false;
+    for (let i = 0; i < 4; i++) {
+        if (!match(octets[i], /^(0|[1-9][0-9]{0,2})$/)) return false;
+        const value = int(octets[i]);
+        if (value < 0 || value > 255) return false;
+    }
+    return true;
+}
+function meshExitLink(node, originIp)
+{
+    if (node !== "Unknown" && match(node, /^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$/))
+        return `http://${node}${index(node, ".") === -1 ? ".local.mesh" : ""}`;
+    if (isIPv4(originIp)) return `http://${originIp}`;
+    return "";
+}
+function readMeshExitRanking()
+{
+    const f = fs.popen("/usr/local/bin/wan-mesh-exits 2>/dev/null");
+    if (!f) return [];
+    const raw = trim(f.read("all") || "");
+    f.close();
+    if (!raw) return [];
+
+    let ranking = [];
+    const lines = split(raw, "\n");
+    for (let i = 0; i < length(lines) && length(ranking) < 5; i++) {
+        const parts = split(lines[i], "|");
+        if (length(parts) < 11) continue;
+        if (!match(parts[0] || "", /^[1-5]$/) || !match(parts[7] || "", /^[0-9]+$/)) continue;
+        const rank = int(parts[0]);
+        const metric = int(parts[7]);
+        const node = parts[2] || "Unknown";
+        const originIp = parts[3] || "-";
+        push(ranking, {
+            rank: rank,
+            state: parts[1] === "active" ? "Babel active" : "Observed",
+            node: node,
+            label: node !== "Unknown" ? node : originIp !== "-" ? originIp : `Origin ${parts[4]}`,
+            href: meshExitLink(node, originIp),
+            metric: metric,
+            refmetric: parts[8] || "-",
+            rtt: match(parts[9] || "", /^[0-9]+([.][0-9]+)?$/) ? parts[9] : "-"
+        });
+    }
+    return ranking;
+}
 const s = readPolicyStatus();
 const enabled = uciMesh.get("aredn", "multiwan", "enabled") === "1";
 const active = s && s.active || uciMesh.get("aredn", "multiwan", "active") || "wan";
@@ -59,6 +108,7 @@ const meshDevice = liveMesh.device || (s && s.remote_mesh_interface) || "Unknown
 const meshMetric = liveMesh.metric || (s && s.remote_mesh_metric) || "Unknown";
 const meshCandidateState = !meshEnabled ? "Not enabled as a candidate" : cm && cm.selection_healthy ? (active === "mesh" ? "Active" : "Standby") : "Unavailable";
 const meshEligibility = cm && (cm.probe_reason || cm.reason) || (meshEnabled ? "Not evaluated" : "Route is not enabled");
+const meshExitRanking = readMeshExitRanking();
 %}
 <section id="wan-card-1" class="pw-card pw-card-main {{healthClass(c1, wan1Enabled)}} {{active === "wan" ? "pw-status-active" : ""}}" aria-labelledby="pw-wan1-title">
     <div class="pw-card-head"><h2 id="pw-wan1-title">WAN 1</h2><span class="pw-badge"><span class="pw-status-dot"></span>{{active === "wan" ? "Active" : "Standby"}}</span></div>
@@ -86,6 +136,44 @@ const meshEligibility = cm && (cm.probe_reason || cm.reason) || (meshEnabled ? "
         <div class="pw-label">Exit</div><div class="pw-value">{{meshAvailable ? meshExitNode : "No table 22 default"}}</div>
         <div class="pw-label">Path</div><div class="pw-value">{{meshAvailable ? meshNextHop + " via " + meshDevice + " · metric " + meshMetric : meshEligibility}}</div>
     </div>
+</section>
+<section id="mesh-exit-ranking" class="pw-card pw-card-full" aria-labelledby="pw-mesh-ranking-title">
+    <div class="pw-card-head">
+        <div>
+            <h2 id="pw-mesh-ranking-title">Mesh WAN Exit Ranking</h2>
+            <div class="pw-muted">Up to five Internet exits currently advertised to this node.</div>
+        </div>
+        <span class="pw-badge">{{length(meshExitRanking)}} visible</span>
+    </div>
+    {% if (!length(meshExitRanking)) { %}
+    <div class="pw-mesh-ranking-empty">No Babel IPv4 default advertisements are currently visible.</div>
+    {% } else { %}
+    <div class="pw-mesh-ranking-wrap">
+        <div class="pw-mesh-ranking" role="table" aria-label="Passive Mesh WAN exit ranking">
+            <div class="pw-mesh-ranking-row pw-mesh-ranking-head" role="row">
+                <div role="columnheader">Rank</div>
+                <div role="columnheader">Exit node</div>
+                <div role="columnheader">Babel metric</div>
+                <div role="columnheader">Babel RTT</div>
+                <div role="columnheader">Data throughput</div>
+                <div role="columnheader">Ping quality</div>
+                <div role="columnheader">State</div>
+            </div>
+            {% for (let i = 0; i < length(meshExitRanking); i++) { const exit = meshExitRanking[i]; %}
+            <div class="pw-mesh-ranking-row" role="row">
+                <div class="pw-mesh-rank" role="cell">{{exit.rank}}</div>
+                <div role="cell">{% if (exit.href) { %}<a href="{{exit.href}}" target="_blank" rel="noopener">{{exit.label}}</a>{% } else { %}{{exit.label}}{% } %}</div>
+                <div role="cell"><strong>{{exit.metric}}</strong>{{exit.refmetric !== "-" ? ` / ref ${exit.refmetric}` : ""}}</div>
+                <div role="cell">{{exit.rtt !== "-" ? `${exit.rtt} ms` : "Unavailable"}}</div>
+                <div class="pw-muted" role="cell">Not sampled</div>
+                <div class="pw-muted" role="cell">Not sampled</div>
+                <div role="cell">{{exit.state}}</div>
+            </div>
+            {% } %}
+        </div>
+    </div>
+    {% } %}
+    <div class="pw-mesh-ranking-note">Passive stage: ranking uses Babel's total metric (lower is better), and RTT is Babel's existing next-hop measurement. No ping, throughput, or Internet probe is sent. This display cannot change PollyWAN selection.</div>
 </section>
 <section id="wan-policy" class="ctrl pw-card pw-card-wide pw-card-clickable" hx-get="status/e/wan-policy" hx-target="#ctrl-modal" hx-swap="innerHTML" tabindex="0" aria-labelledby="pw-policy-title">
     <div class="pw-card-head"><h2 id="pw-policy-title">Route Policy Setup</h2><span class="pw-configure">Configure</span></div>

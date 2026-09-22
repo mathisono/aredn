@@ -222,6 +222,46 @@
   text-decoration: none;
 }
 #multiwan-page .pw-doc-link:hover { background: var(--pw-hover); }
+#multiwan-page .pw-mesh-ranking-wrap {
+  margin-top: .8rem;
+  max-width: 100%;
+  overflow-x: auto;
+}
+#multiwan-page .pw-mesh-ranking {
+  display: grid;
+  min-width: 820px;
+}
+#multiwan-page .pw-mesh-ranking-row {
+  align-items: center;
+  border-top: 1px solid var(--pw-border);
+  display: grid;
+  gap: .7rem;
+  grid-template-columns: 3rem minmax(9rem, 1.5fr) minmax(8rem, 1.2fr) minmax(6rem, .8fr) minmax(7rem, 1fr) minmax(7rem, 1fr) minmax(6rem, .8fr);
+  min-height: 2.55rem;
+  padding: .45rem .3rem;
+}
+#multiwan-page .pw-mesh-ranking-head {
+  border-top: 0;
+  color: var(--pw-muted);
+  font-size: .75rem;
+  font-weight: 600;
+}
+#multiwan-page .pw-mesh-ranking-row a {
+  color: var(--pw-active);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+#multiwan-page .pw-mesh-rank {
+  font-size: 1rem;
+  font-weight: 700;
+  text-align: center;
+}
+#multiwan-page .pw-mesh-ranking-empty,
+#multiwan-page .pw-mesh-ranking-note {
+  color: var(--pw-muted);
+  font-size: .8rem;
+  margin-top: .8rem;
+}
 .pollywan-dialog {
   max-width: min(760px, calc(100vw - 1rem));
 }

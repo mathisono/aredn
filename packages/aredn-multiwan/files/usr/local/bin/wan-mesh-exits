@@ -1,0 +1,130 @@
+#!/bin/sh
+# Passively list up to five IPv4 Internet exits advertised through Babel.
+# Output: rank|state|node|origin_ip|origin_id|next_hop|interface|metric|refmetric|rtt_ms|rttcost
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+BABEL_SOCKET="${BABEL_SOCKET:-/var/run/babel.sock}"
+HOSTS_DIR="${HOSTS_DIR:-/var/run/arednlink/hosts}"
+SOCAT_BIN="${SOCAT_BIN:-socat}"
+MAX_EXITS="${MAX_EXITS:-5}"
+
+case "$MAX_EXITS" in
+    1|2|3|4|5) ;;
+    *) MAX_EXITS=5 ;;
+esac
+
+resolve_node()
+{
+    wanted_ip="$1"
+    [ "$wanted_ip" != - ] || { printf 'Unknown\n'; return; }
+
+    for host_file in "$HOSTS_DIR"/*
+    do
+        [ -f "$host_file" ] || continue
+        node="$(awk -v wanted="$wanted_ip" '$1 == wanted { print $2; exit }' "$host_file" 2>/dev/null || true)"
+        case "$node" in
+            ''|*[!A-Za-z0-9._-]*) ;;
+            *) printf '%s\n' "$node"; return ;;
+        esac
+    done
+
+    printf 'Unknown\n'
+}
+
+dump="$({ printf 'dump\nquit\n'; } |
+    "$SOCAT_BIN" -T 5 -t 5 "UNIX-CLIENT:$BABEL_SOCKET" - 2>/dev/null || true)"
+
+printf '%s\n' "$dump" | grep -q '^BABEL ' || exit 0
+
+rows="$(printf '%s\n' "$dump" | awk '
+$1 == "add" && $2 == "neighbour" {
+    address = iface = rtt = rttcost = ""
+    for (i = 1; i <= NF; i++) {
+        if ($i == "address") address = $(i + 1)
+        else if ($i == "if") iface = $(i + 1)
+        else if ($i == "rtt") rtt = $(i + 1)
+        else if ($i == "rttcost") rttcost = $(i + 1)
+    }
+    if (address != "" && iface != "") {
+        key = address SUBSEP iface
+        neighbour_rtt[key] = rtt
+        neighbour_rttcost[key] = rttcost
+    }
+}
+
+$1 == "add" && $2 == "route" {
+    prefix = installed = id = metric = refmetric = ""
+    via = nexthop = iface = ""
+
+    for (i = 1; i <= NF; i++) {
+        if ($i == "prefix") prefix = $(i + 1)
+        else if ($i == "installed") installed = $(i + 1)
+        else if ($i == "id") id = $(i + 1)
+        else if ($i == "metric") metric = $(i + 1)
+        else if ($i == "refmetric") refmetric = $(i + 1)
+        else if ($i == "via") via = $(i + 1)
+        else if ($i == "nexthop") nexthop = $(i + 1)
+        else if ($i == "if") iface = $(i + 1)
+    }
+
+    if (id == "" || metric !~ /^[0-9]+$/ || metric + 0 >= 65535)
+        next
+
+    if (prefix ~ /^[0-9.]+\/32$/) {
+        ip = prefix
+        sub(/\/32$/, "", ip)
+        if (!(id in origin_ip) ||
+            (installed == "yes" && origin_installed[id] != "yes") ||
+            (installed == origin_installed[id] && metric + 0 < origin_metric[id])) {
+            origin_ip[id] = ip
+            origin_installed[id] = installed
+            origin_metric[id] = metric + 0
+        }
+    }
+
+    if (prefix == "0.0.0.0/0") {
+        if (!(id in have_default) ||
+            (installed == "yes" && selected[id] != "yes") ||
+            (installed == selected[id] && metric + 0 < best_metric[id])) {
+            have_default[id] = 1
+            selected[id] = installed
+            best_metric[id] = metric + 0
+            refs[id] = refmetric
+            vias[id] = via
+            hops[id] = nexthop
+            ifaces[id] = iface
+        }
+    }
+}
+
+END {
+    for (id in have_default) {
+        ip = (id in origin_ip) ? origin_ip[id] : "-"
+        state = selected[id] == "yes" ? "active" : "observed"
+        hop = hops[id] != "" ? hops[id] : "-"
+        iface = ifaces[id] != "" ? ifaces[id] : "-"
+        ref = refs[id] ~ /^[0-9]+$/ ? refs[id] : "-"
+        key = vias[id] SUBSEP ifaces[id]
+        rtt = neighbour_rtt[key] ~ /^[0-9]+([.][0-9]+)?$/ ? neighbour_rtt[key] : "-"
+        rttcost = neighbour_rttcost[key] ~ /^[0-9]+$/ ? neighbour_rttcost[key] : "-"
+        printf "%d|%s|%s|%s|%s|%s|%s|%s|%s\n",
+            best_metric[id], state, id, ip, hop, iface, ref, rtt, rttcost
+    }
+}')"
+
+[ -n "$rows" ] || exit 0
+
+rank=0
+printf '%s\n' "$rows" | sort -t '|' -k1,1n -k3,3 |
+while IFS='|' read -r metric state origin_id origin_ip next_hop interface refmetric rtt_ms rttcost
+do
+    rank=$((rank + 1))
+    [ "$rank" -le "$MAX_EXITS" ] || break
+    node="$(resolve_node "$origin_ip")"
+    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+        "$rank" "$state" "$node" "$origin_ip" "$origin_id" \
+        "$next_hop" "$interface" "$metric" "$refmetric" "$rtt_ms" "$rttcost"
+done

@@ -18,6 +18,7 @@ files/usr/local/bin/wan-tunnel-guard
 files/usr/local/bin/wan-calibrate
 files/usr/local/bin/wan-speed-test
 files/usr/local/bin/wan-mesh-exit
+files/usr/local/bin/wan-mesh-exits
 files/etc/init.d/wan3-manager
 files/etc/hotplug.d/iface/95-wan3-manager
 files/etc/hotplug.d/net/95-wan3-manager
@@ -29,6 +30,7 @@ tests/mock-port-manager.sh
 tests/mock-route-cache.sh
 tests/mock-tunnel-guard.sh
 tests/mock-mesh-exit.sh
+tests/mock-mesh-exits.sh
 tools/sync-integration.sh'
 
 REQUIRED='Makefile
@@ -49,6 +51,7 @@ tools/sync-integration.sh
 tests/test-selection-model.py
 tests/test-route-order-ui.js
 tests/mock-mesh-exit.sh
+tests/mock-mesh-exits.sh
 files/app/main/u-multiwan.ut
 files/app/main/u-wan-policy.ut
 files/app/main/u-ethernet-ports.ut
@@ -88,7 +91,7 @@ done
 # Package metadata and optional-only target contract.
 require_text Makefile 'PKG_NAME:=aredn-multiwan'
 require_text Makefile 'PKG_VERSION:=0.1.0.29.5'
-require_text Makefile 'PKG_RELEASE:=10'
+require_text Makefile 'PKG_RELEASE:=11'
 require_text Makefile '/etc/init.d/uhttpd restart'
 require_text Makefile 'URL:=https://github.com/mathisono/AREDN_PollyWAN'
 reject_text Makefile '+ip-tiny'
@@ -111,6 +114,7 @@ require_text Makefile 'files/app/partial/multiwan-style.ut'
 require_text Makefile 'files/app/partial/multiwan.ut'
 require_text Makefile 'files/usr/local/bin/wan-speed-test'
 require_text Makefile 'files/usr/local/bin/wan-mesh-exit'
+require_text Makefile 'files/usr/local/bin/wan-mesh-exits'
 require_text Makefile 'files/usr/share/ucode/aredn/pollywan.uc'
 require_text Makefile 'files/www/cgi-bin/apps/aredn-multiwan/status.json'
 require_text Makefile 'docs/aredn-sysinfo-integration-plan.md'
@@ -399,6 +403,21 @@ require_text "$SLA" '"probe_endpoint":%s'
 require_text "$SLA" '"next_probe_epoch":%s'
 require_text "$SLA" '"candidates":['
 
+# Passive Mesh WAN inventory is display-only and cannot affect route selection.
+MESH_EXITS=files/usr/local/bin/wan-mesh-exits
+require_text "$MESH_EXITS" "printf 'dump\\nquit\\n'"
+require_text "$MESH_EXITS" '$2 == "neighbour"'
+require_text "$MESH_EXITS" '$2 == "route"'
+require_text "$MESH_EXITS" 'prefix == "0.0.0.0/0"'
+require_text "$MESH_EXITS" 'metric + 0 >= 65535'
+require_text "$MESH_EXITS" 'MAX_EXITS="${MAX_EXITS:-5}"'
+require_text "$MESH_EXITS" 'sort -t '\''|'\'' -k1,1n -k3,3'
+reject_text "$MESH_EXITS" 'curl '
+reject_text "$MESH_EXITS" 'ping '
+reject_text "$MESH_EXITS" 'iperf'
+reject_text "$MESH_EXITS" 'uci set'
+reject_text "$MESH_EXITS" 'ip route'
+
 # Tunnel guards and Babel race prevention.
 GUARD=files/usr/local/bin/wan-tunnel-guard
 require_text "$GUARD" 'RULE_PREF=45'
@@ -486,6 +505,18 @@ require_text files/app/partial/link-calibration.ut 'No table 22 route'
 require_text files/app/partial/link-calibration.ut 'function liveMeshExit()'
 require_text files/app/partial/wan-policy.ut '<div class="pw-label">Exit</div>'
 require_text files/app/partial/wan-policy.ut 'function liveMeshExit()'
+require_text files/app/partial/wan-policy.ut 'function readMeshExitRanking()'
+require_text files/app/partial/wan-policy.ut 'function isIPv4(address)'
+require_text files/app/partial/wan-policy.ut '/usr/local/bin/wan-mesh-exits'
+require_text files/app/partial/wan-policy.ut 'id="mesh-exit-ranking"'
+require_text files/app/partial/wan-policy.ut 'Babel metric'
+require_text files/app/partial/wan-policy.ut 'Babel RTT'
+require_text files/app/partial/wan-policy.ut 'Data throughput'
+require_text files/app/partial/wan-policy.ut 'Ping quality'
+require_text files/app/partial/wan-policy.ut 'Not sampled'
+require_text files/app/partial/wan-policy.ut 'This display cannot change PollyWAN selection.'
+require_text files/app/partial/wan-policy.ut 'target="_blank" rel="noopener"'
+require_text files/app/partial/wan-policy.ut '.local.mesh'
 require_text files/app/main/status/e/wan-policy.ut 'Route Policy Setup'
 require_text files/app/main/status/e/wan-policy.ut 'Preferred connection order'
 require_text files/app/main/status/e/wan-policy.ut 'Selecting a route already used in another position swaps the two positions.'
@@ -529,6 +560,8 @@ require_text files/app/partial/multiwan-page.ut 'pw-state-current'
 reject_text files/app/partial/multiwan-page.ut 'manual_check'
 require_text files/app/partial/multiwan-page.ut 'Current operating state'
 require_text files/app/partial/multiwan-style.ut '.pw-state-strip'
+require_text files/app/partial/multiwan-style.ut '.pw-mesh-ranking-row'
+require_text files/app/partial/multiwan-style.ut 'overflow-x: auto'
 require_text files/app/partial/multiwan-style.ut '.pollywan-ports-page'
 reject_text files/app/main/status/e/ethernet-ports.ut 'throw "'
 require_text files/app/partial/multiwan-style.ut '.pollywan-wide-page'
@@ -643,6 +676,7 @@ else
     ./tests/mock-tunnel-guard.sh
 fi
 ./tests/mock-mesh-exit.sh
+./tests/mock-mesh-exits.sh
 ./tests/test-selection-model.py
 node tests/test-route-order-ui.js
 
@@ -682,7 +716,7 @@ if style.count('id="pollywan-style"') != 1:
 if 'id="pollywan-style"' in (root / 'files/app/main/u-multiwan.ut').read_text():
     raise SystemExit('u-multiwan must not render #pollywan-style directly')
 page = (root / 'files/app/partial/multiwan-page.ut').read_text()
-for required in ['id="multiwan-page"', 'wan-card-1', 'wan-card-2', 'usb-wan', 'mesh-card']:
+for required in ['id="multiwan-page"', 'wan-card-1', 'wan-card-2', 'usb-wan', 'mesh-card', 'mesh-exit-ranking']:
     if required not in page and required not in (root / 'files/app/partial/wan-policy.ut').read_text():
         raise SystemExit(f'missing dashboard marker: {required}')
 for port in range(1, 6):

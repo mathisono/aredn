@@ -227,6 +227,25 @@ Test:
 
 Inspect `/usr/local/bin/wan-sla status`, `/usr/local/bin/wan3-manager status`, and tables after each transition.
 
+## 8a. Passive Mesh WAN ranking
+
+Run `/usr/local/bin/wan-mesh-exits` and compare it with a read-only Babel
+`dump`. Verify the dashboard and helper:
+
+- show at most five distinct default-route originators
+- sort by total Babel metric from lowest to highest
+- prefer Babel's installed path when an originator has multiple visible paths
+- mark the installed default as active and other advertisements as observed
+- resolve known originator `/32` addresses to AREDN node names
+- link only sanitized node names or valid origin IPv4 addresses
+- label Babel RTT as next-hop RTT
+- show throughput and ping quality as `Not sampled`
+
+For the first live test, observe only the local Babel socket. Confirm no
+`ping`, `curl`, `iperf3`, UCI writes, route updates, or selection changes occur
+while the tile refreshes. Capture the configured route order and selected WAN
+before and after; they must be identical.
+
 ## 9. Route transaction and Babel
 
 ```sh

@@ -27,6 +27,170 @@ AREDN's `/var/run/arednlink/hosts` data. This reports the WAN exit node rather
 than merely the immediate next-hop neighbor. If the name data is not yet
 available, routing continues normally and the UI reports an unknown exit node.
 
+## Read-only inventory of advertised WAN exits
+
+The dashboard reports the installed table-22 exit because that is the route
+the kernel can actually use. For diagnosis, an administrator may also want to
+see every IPv4 default advertisement currently known to the local Babel
+process. The following temporary helper reads Babel's local socket, groups
+multiple paths by originator ID, marks the installed path, and sorts the
+result by the metric seen at this node.
+
+R29.5 r11 packages the corresponding bounded helper as
+`/usr/local/bin/wan-mesh-exits` and presents its first five entries in the
+**Mesh WAN Exit Ranking** dashboard tile. The packaged helper also correlates
+each chosen route's next hop with Babel's existing neighbor RTT. That RTT is
+only the local node-to-next-hop measurement; it is not end-to-end latency to
+the gateway's Internet connection.
+
+This first ranking stage is intentionally non-stressing. It opens only Babel's
+local control socket and reads AREDN's local hostname data. It sends no ping,
+HTTPS, or throughput traffic. The throughput and ping-quality columns are
+therefore shown as `Not sampled`. Ranking is display-only and cannot alter
+PollyWAN's configured route order, candidate eligibility, or selected WAN.
+
+The helper is passive. It does not probe the Internet and does not change UCI,
+Babel, firewall rules, or any routing table. It uses only `sh`, `awk`, `grep`,
+`sort`, and `socat`, which are already present on a supported AREDN node.
+
+Save it as `/tmp/mesh-exits`, make it executable, and run it locally:
+
+```sh
+#!/bin/sh
+# List all IPv4 WAN exits currently visible to this AREDN node.
+# Read-only: no route, Babel, firewall, or UCI changes.
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+BABEL_SOCKET="${BABEL_SOCKET:-/var/run/babel.sock}"
+HOSTS_DIR="${HOSTS_DIR:-/var/run/arednlink/hosts}"
+SOCAT_BIN="${SOCAT_BIN:-socat}"
+
+command -v "$SOCAT_BIN" >/dev/null 2>&1 || {
+    echo "socat is unavailable" >&2
+    exit 1
+}
+
+[ -S "$BABEL_SOCKET" ] || {
+    echo "Babel socket not found: $BABEL_SOCKET" >&2
+    exit 1
+}
+
+if ! dump="$({ printf 'dump\nquit\n'; } |
+    "$SOCAT_BIN" -T 5 -t 5 "UNIX-CLIENT:$BABEL_SOCKET" - 2>/dev/null)"
+then
+    echo "Unable to read Babel" >&2
+    exit 1
+fi
+
+printf '%s\n' "$dump" | grep -q '^BABEL ' || {
+    echo "Invalid Babel response" >&2
+    exit 1
+}
+
+rows="$(printf '%s\n' "$dump" | awk '
+$1 == "add" && $2 == "route" {
+    prefix = installed = id = metric = refmetric = ""
+    nexthop = iface = ""
+
+    for (i = 1; i <= NF; i++) {
+        if ($i == "prefix") prefix = $(i + 1)
+        else if ($i == "installed") installed = $(i + 1)
+        else if ($i == "id") id = $(i + 1)
+        else if ($i == "metric") metric = $(i + 1)
+        else if ($i == "refmetric") refmetric = $(i + 1)
+        else if ($i == "nexthop") nexthop = $(i + 1)
+        else if ($i == "if") iface = $(i + 1)
+    }
+
+    if (id == "" || metric !~ /^[0-9]+$/ || metric + 0 >= 65535)
+        next
+
+    if (prefix ~ /^[0-9.]+\/32$/) {
+        ip = prefix
+        sub(/\/32$/, "", ip)
+
+        if (!(id in origin_ip) ||
+            (installed == "yes" && ip_selected[id] != "yes") ||
+            (installed == ip_selected[id] && metric + 0 < ip_metric[id])) {
+            origin_ip[id] = ip
+            ip_selected[id] = installed
+            ip_metric[id] = metric + 0
+        }
+    }
+
+    if (prefix == "0.0.0.0/0") {
+        if (!(id in have) ||
+            (installed == "yes" && selected[id] != "yes") ||
+            (installed == selected[id] && metric + 0 < best[id])) {
+            have[id] = 1
+            selected[id] = installed
+            best[id] = metric + 0
+            refs[id] = refmetric
+            hops[id] = nexthop
+            ifaces[id] = iface
+        }
+    }
+}
+
+END {
+    for (id in have) {
+        ip = (id in origin_ip) ? origin_ip[id] : "-"
+        state = selected[id] == "yes" ? "ACTIVE" : "standby"
+        printf "%d|%s|%s|%s|%s|%s|%s\n", best[id], state, id,
+            ip, hops[id], ifaces[id], refs[id]
+    }
+}')"
+
+[ -n "$rows" ] || {
+    echo "No advertised IPv4 WAN exits are currently visible."
+    exit 0
+}
+
+printf 'METRIC\tSTATE\tNODE\tORIGIN_IP\tORIGIN_ID\tNEXT_HOP\tINTERFACE\tREFMETRIC\n'
+
+printf '%s\n' "$rows" | sort -n |
+while IFS='|' read -r metric state id origin_ip next_hop interface refmetric
+do
+    node=Unknown
+    if [ "$origin_ip" != - ]; then
+        found="$(awk -v wanted="$origin_ip" \
+            '$1 == wanted { print $2; exit }' \
+            "$HOSTS_DIR"/* 2>/dev/null || true)"
+        [ -n "$found" ] && node="$found"
+    fi
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$metric" "$state" "$node" "$origin_ip" "$id" \
+        "$next_hop" "$interface" "$refmetric"
+done
+```
+
+Example output:
+
+```text
+METRIC  STATE    NODE             ORIGIN_IP    ORIGIN_ID                NEXT_HOP       INTERFACE   REFMETRIC
+384     ACTIVE   K5GLH-HAP-DC     10.207.164.4 aa:bb:cc:dd:ee:ff:00:11 172.31.191.128  wgsac1fbf80 284
+640     standby  OTHER-GATEWAY    10.44.55.66  11:22:33:44:55:66:77:88 169.254.10.2    br-dtdlink   512
+```
+
+`ACTIVE` is Babel's installed route and is authoritative. A standby entry is
+an observed advertisement, not a promise that Babel can install it next. A
+lower metric is normally more attractive, but feasibility, route state, and
+topology changes may prevent simple metric order from becoming the actual
+failover order. `REFMETRIC` is the metric reported through the neighboring
+route; `METRIC` is the total metric evaluated at this node.
+
+This inventory reports gateway nodes, not every physical uplink behind each
+gateway. If a remote gateway has WAN 1, WAN 2, and USB, Babel still advertises
+only that gateway's selected table-28 default. The helper also does not prove
+that an advertised gateway currently has working Internet service. Those
+functions require origin-side health grading and a separate end-to-end check
+of the active table-22 path. Any later grading signal must remain telemetry for
+the Mesh WAN view unless a separate, explicit selection design is approved.
+
 ## AREDN routing tables
 
 | Table | Purpose |

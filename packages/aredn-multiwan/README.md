@@ -10,6 +10,7 @@ PollyWAN is experimental and is not an official AREDN release.
 
 - manages WAN1, WAN2, and optional WAN3 as local Internet candidates
 - keeps the Babel-learned remote Mesh WAN as the fallback in table 22
+- passively ranks up to five Babel-advertised Mesh WAN exits without changing selection
 - separates lightweight health checks from occasional throughput tests
 - offers one explicit ordered route policy with deterministic failover
 - supports AREDN node-to-node iperf3 and Cloudflare Internet-path tests
@@ -23,9 +24,9 @@ PollyWAN is experimental and is not an official AREDN release.
 - MikroTik hAP ac2
 - MikroTik hAP ac3
 
-The current R29.5 test package uses APK version `0.1.0.29.5-r10`. APK reserves
+The current R29.5 test package uses APK version `0.1.0.29.5-r11`. APK reserves
 `-rN` for its integer package revision, so the product release is represented
-as dotted `PKG_VERSION` components and the package revision is `r10`. The latest
+as dotted `PKG_VERSION` components and the package revision is `r11`. The latest
 published GitHub release remains `0.1.0-r29` until R29.5 validation is complete.
 
 ## Release files
@@ -178,6 +179,14 @@ usable. An optional minimum allowable local data rate can make a measured local
 route ineligible, but speed never reorders the configured priorities. Remote
 Mesh WAN eligibility is based on the presence of an AREDN/Babel table-22
 default, not a local speed test.
+
+The dashboard also has a passive Mesh WAN Exit Ranking tile. It lists at most
+five distinct Babel default-route originators, sorts them by the total Babel
+metric observed at this node, and links a known node name to its AREDN page.
+The displayed Babel RTT is the already-known next-hop-neighbor RTT, not an
+end-to-end Internet measurement. Data-throughput and ping-quality fields remain
+`Not sampled` in this first stage. The tile sends no probe traffic and cannot
+change PollyWAN's configured order, eligibility, or selected WAN.
 
 Gateway reachability is diagnostic only. A local gateway that responds to ICMP does not make a WAN healthy unless the source-bound external HTTPS health check also succeeds. If the active WAN fails that raw upstream check, table 28 is withdrawn immediately so the mesh stops using the known-bad exit while local selection hysteresis decides whether to keep or replace the active path. Recovered exits are re-advertised only after the configured export recovery count and hold-down.
 
@@ -363,6 +372,7 @@ Tunnel ingress is blocked from local and remote Internet defaults while PollyWAN
 /usr/local/bin/wan3-manager usb-support
 /usr/local/bin/wan-speed-test status-all
 /usr/local/bin/wan-tunnel-guard status
+/usr/local/bin/wan-mesh-exits
 ```
 
 Package-owned public telemetry is available at:
@@ -427,7 +437,7 @@ Then run:
 ./tests/verify.sh
 make -C openwrt package/aredn-multiwan/clean V=s
 make -C openwrt package/aredn-multiwan/compile V=s
-find openwrt/bin -name 'aredn-multiwan-0.1.0.29.5-r10.apk' -print -exec sha256sum {} \;
+find openwrt/bin -name 'aredn-multiwan-0.1.0.29.5-r11.apk' -print -exec sha256sum {} \;
 ```
 
 Static verification is not a substitute for exact kernel-ABI checks, disabled-install testing, port rollback testing, or physical hardware validation.

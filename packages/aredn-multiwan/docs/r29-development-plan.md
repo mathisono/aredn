@@ -381,6 +381,41 @@ requests to the complete dashboard and live policy fragments all returned HTTP
 200 and displayed Remote Mesh WAN as Active. The manager, Babel, GPS
 `/dev/ttyACM0`, gpsd, and management access remained healthy.
 
+### R29.5 r11 passive Mesh WAN ranking checkpoint
+
+r11 adds `/usr/local/bin/wan-mesh-exits`, a read-only inventory of up to five
+distinct IPv4 default advertisements visible through Babel's local socket.
+Rows are ordered by the total Babel metric evaluated at this node, use the
+installed path for an originator when one exists, resolve the originator's
+primary `/32` to an AREDN node name, and include Babel's already-maintained
+next-hop RTT when available.
+
+The dashboard presents these rows in a new **Mesh WAN Exit Ranking** tile.
+Known node names link to their AREDN node page. Data throughput and ping
+quality remain visibly `Not sampled` in this initial stage: the inventory sends
+no ping, HTTPS, or throughput traffic and performs no UCI, firewall, Babel, or
+routing writes. Its order is display telemetry only and has no input to
+PollyWAN's configured route order, candidate eligibility, or active-WAN
+selection.
+
+The mock covers the five-row cap, metric ordering, installed-path preference,
+originator deduplication, hostname mapping, next-hop RTT mapping, and invalid
+Babel responses. Standalone and synchronized integration verification pass,
+and the dashboard template compiles with the matching AREDN UCode host tool.
+A clean stable AREDN 4.26.7.0 hAP ac2 build, based on standalone commit
+`ef5961c21d9117ec615c04d833645115cc9bbfad` and integration commit
+`5a934a061dac5e51356907dc207fa4f0215c0b7a` plus the r11 working-tree changes,
+produced the 78,778-byte
+`aredn-multiwan-0.1.0.29.5-r11.apk` for
+`arm_cortex-a7_neon-vfpv4`, SHA-256
+`020ad351b2477640f91f933c178f3ddf09b86ee9bd43582468f8ce49d6832e50`.
+APK integrity, metadata, dependencies, and packaged-helper presence pass.
+
+No node received this build. Live display validation is intentionally deferred
+until the r11 package is explicitly approved for a node; the first live
+observation must remain passive and must prove selection and routing
+invariance.
+
 ### Ordered Route Policy Setup
 
 R29.5 replaces the Manual/Automatic and speed-ranked policy with one ordered

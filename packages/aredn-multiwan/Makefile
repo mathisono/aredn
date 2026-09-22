@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=aredn-multiwan
 PKG_VERSION:=0.1.0.29.5
-PKG_RELEASE:=10
+PKG_RELEASE:=11
 PKG_LICENSE:=GPL-3.0-only
 PKG_MAINTAINER:=AREDN contributors
 PKGARCH:=all
@@ -89,6 +89,7 @@ define Package/aredn-multiwan/install
 	$(INSTALL_BIN) ./files/usr/local/bin/wan-calibrate $(1)/usr/local/bin/
 	$(INSTALL_BIN) ./files/usr/local/bin/wan-speed-test $(1)/usr/local/bin/
 	$(INSTALL_BIN) ./files/usr/local/bin/wan-mesh-exit $(1)/usr/local/bin/
+	$(INSTALL_BIN) ./files/usr/local/bin/wan-mesh-exits $(1)/usr/local/bin/
 	$(INSTALL_DIR) $(1)/usr/share/ucode/aredn
 	$(INSTALL_DATA) ./files/usr/share/ucode/aredn/pollywan.uc $(1)/usr/share/ucode/aredn/
 
