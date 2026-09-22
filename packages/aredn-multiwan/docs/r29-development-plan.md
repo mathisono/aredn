@@ -411,10 +411,20 @@ produced the 78,778-byte
 `020ad351b2477640f91f933c178f3ddf09b86ee9bd43582468f8ce49d6832e50`.
 APK integrity, metadata, dependencies, and packaged-helper presence pass.
 
-No node received this build. Live display validation is intentionally deferred
-until the r11 package is explicitly approved for a node; the first live
-observation must remain passive and must prove selection and routing
-invariance.
+Live deployment completed on 2026-09-21 using that exact r11 APK and SHA-256.
+`KJ6DZB-WSB-hub5` was reinstalled from r11 to the verified artifact, and
+`KP4DJT-HAP-AC2-VAN` was upgraded from r10 to r11. Both nodes retained
+byte-for-byte-identical `/etc/config` hashes across the upgrade, reported the
+expected package version, served the status and help endpoints, and ran the
+PollyWAN service after its upgrade restart. The four r11 runtime files checked
+on each node matched the standalone source hashes.
+
+WAN 1 remained healthy and active on both nodes, each table-22 Remote Mesh WAN
+default remained available, and neither node acquired a table-28 export. The
+new passive helper reported two visible exits on hub5 and one on KP4DJT without
+changing route selection. KP4DJT's gpsd process and `/dev/ttyACM0` remained
+present. This deployment did not change port roles, WAN configuration, radios,
+or firewall policy, and did not exercise reboot or active failover scenarios.
 
 ### Ordered Route Policy Setup
 
