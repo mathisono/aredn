@@ -1,0 +1,120 @@
+#!/bin/sh
+# Seed PollyWAN defaults. This script intentionally does not read or write GPS,
+# gpsd, USB power, AREDN time, or location settings.
+
+UCI='uci -c /etc/config.mesh'
+
+if ! $UCI -q get aredn.multiwan >/dev/null 2>&1; then
+    $UCI set aredn.multiwan='multiwan'
+fi
+
+set_default()
+{
+    option="$1"; value="$2"
+    $UCI -q get "aredn.multiwan.$option" >/dev/null 2>&1 || $UCI set "aredn.multiwan.$option=$value"
+}
+
+set_default enabled 0
+set_default selection_mode manual
+set_default active wan
+set_default active_bin unknown
+set_default preferred_wan wan
+set_default wan_enable 1
+set_default wan2_enable 0
+set_default wan3_enable 0
+set_default selection_min_bin low
+set_default mesh_share_min_bin medium
+set_default health_interval 30
+set_default standby_health_interval 90
+set_default failed_probe_interval 120
+set_default failed_probe_interval_max 300
+set_default health_url 'https://connectivitycheck.gstatic.com/generate_204'
+set_default health_expected_codes 204
+set_default health_url_secondary ''
+set_default health_secondary_expected_codes 200,204
+set_default failure_count 2
+set_default promote_count 2
+set_default hold_down 120
+set_default mesh_export_recover_count 3
+set_default mesh_export_hold_down 60
+set_default result_ttl 28800
+set_default speed_result_ttl 21600
+set_default speed_test_auto 0
+set_default speed_test_interval 21600
+set_default speed_test_payload 5000000
+set_default speed_test_method cloudflare
+set_default speed_node ''
+set_default speed_iperf_port 5201
+set_default speed_iperf_duration 10
+set_default speed_threshold_low 5
+set_default speed_threshold_fast 30
+set_default return_to_preferred 0
+set_default calibration_interval 21600
+
+# Ethernet role management is a second explicit opt-in. WAN3 is fixed to USB.
+set_default port_roles_enabled 0
+set_default port_rollback_timeout 180
+set_default port1_role wan
+set_default port2_role lan
+set_default port3_role lan
+set_default port4_role lan
+set_default port5_role off
+set_default port1_dtd 0
+set_default port2_dtd 0
+set_default port3_dtd 0
+set_default port4_dtd 0
+set_default port5_dtd 1
+
+set_default wan3_device auto
+
+cleanup_old_proxy_state()
+{
+    old_pid_file=/var/run/wan3-redsocks.pid
+    if [ -r "$old_pid_file" ]; then
+        old_pid="$(cat "$old_pid_file" 2>/dev/null || true)"
+        case "$old_pid" in
+            ''|*[!0-9]*) ;;
+            *)
+                old_cmd="$(tr '\0' ' ' < "/proc/$old_pid/cmdline" 2>/dev/null || true)"
+                case "$old_cmd" in
+                    *redsocks*'/tmp/wan3/redsocks.conf'*|*redsocks*'wan3-redsocks.pid'*)
+                        kill "$old_pid" >/dev/null 2>&1 || true
+                        ;;
+                esac
+                ;;
+        esac
+    fi
+
+    command -v nft >/dev/null 2>&1 && nft delete table inet aredn_wan3_proxy >/dev/null 2>&1 || true
+    rm -f /var/run/wan3-redsocks.pid \
+        /tmp/wan3/redsocks.conf \
+        /tmp/wan3/proxy.nft \
+        /tmp/wan3/proxy.hash
+
+    uci -q delete firewall.aredn_multiwan_proxy_wifi >/dev/null 2>&1 || true
+    uci -q delete firewall.aredn_multiwan_proxy_dtd >/dev/null 2>&1 || true
+    uci commit firewall >/dev/null 2>&1 || true
+
+    for option in \
+        wan3_proxy_enable \
+        wan3_proxy_host \
+        wan3_proxy_port \
+        wan3_proxy_username \
+        wan3_proxy_password \
+        wan3_proxy_local_port
+    do
+        $UCI -q delete "aredn.multiwan.$option" >/dev/null 2>&1 || true
+        uci -q delete "aredn.multiwan.$option" >/dev/null 2>&1 || true
+    done
+    uci commit aredn >/dev/null 2>&1 || true
+}
+
+# Present only Manual and Automatic while preserving old values on upgrade.
+case "$($UCI -q get aredn.multiwan.selection_mode 2>/dev/null)" in
+    availability|adaptive) $UCI set aredn.multiwan.selection_mode='automatic' ;;
+esac
+
+cleanup_old_proxy_state
+
+$UCI commit aredn
+exit 0

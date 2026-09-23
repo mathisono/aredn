@@ -1,0 +1,3 @@
+{% if (auth.isAdmin) { %}
+{{_R("multiwan-page")}}
+{% } else { response.statusCode = 403; print("Administrator authentication required"); } %}

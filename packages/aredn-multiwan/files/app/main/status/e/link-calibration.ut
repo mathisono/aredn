@@ -1,0 +1,112 @@
+{%
+const supportedBoards = { "mikrotik,routerboard-952ui-5ac2nd": true, "mikrotik,hap-ac2": true, "mikrotik,hap-ac3": true };
+if (!auth.isAdmin) { response.statusCode = 403; print("Administrator authentication required"); return; }
+if (!supportedBoards[hardware.getBoardModel().id]) { response.statusCode = 404; print("Connection speed test is not available on this device"); return; }
+
+function readJson(path) { const v = fs.readfile(path); if (!v) return null; try { return json(v); } catch (_) { return null; } }
+function allowed(value, values, fallback) { for (let i = 0; i < length(values); i++) if (value === values[i]) return value; return fallback; }
+function bounded(value, fallback, minimum, maximum) { const n = int(value || fallback); return n >= minimum && n <= maximum ? n : fallback; }
+function validNode(value) { return value === "" || match(value, /^[A-Za-z0-9.-]{1,253}$/); }
+function wanLabel(name) { return name === "wan" ? "WAN 1" : name === "wan2" ? "WAN 2" : "Android USB tether"; }
+function payloadLabel(bytes) { return bytes === "1000000" ? "1 MB" : bytes === "5000000" ? "5 MB" : bytes === "10000000" ? "10 MB" : bytes === "20000000" ? "20 MB" : "Adaptive"; }
+function resultFor(name)
+{
+    const last = readJson(`/tmp/wan-speed/${name}.json`);
+    if (last && last.valid === true) return last;
+    return readJson(`/tmp/wan-speed/${name}.status.json`) || last;
+}
+function stateText(item, enabled, ttl)
+{
+    if (!enabled) return "Disabled";
+    if (!item) return "Not tested";
+    if (item.valid === true) {
+        const age = int(time() - (item.timestamp || 0));
+        if (age > ttl) return "Expired";
+        return "Valid";
+    }
+    if (item.message === "Disabled") return "Disabled";
+    if (item.message && index(item.message, "route") >= 0) return "No route";
+    return item.message ? "Failed" : "Not tested";
+}
+const interfaces = [ { name: "wan", label: "WAN 1", enabled: uciMesh.get("aredn", "multiwan", "wan_enable") !== "0" }, { name: "wan2", label: "WAN 2", enabled: uciMesh.get("aredn", "multiwan", "wan2_enable") === "1" }, { name: "wan3", label: "Android USB tether", enabled: uciMesh.get("aredn", "multiwan", "wan3_enable") === "1" } ];
+let method = uciMesh.get("aredn", "multiwan", "speed_test_method") || "cloudflare";
+let payload = uciMesh.get("aredn", "multiwan", "speed_test_payload") || "5000000";
+let ttl = bounded(uciMesh.get("aredn", "multiwan", "speed_result_ttl"), 21600, 900, 86400);
+let node = uciMesh.get("aredn", "multiwan", "speed_node") || "";
+let port = bounded(uciMesh.get("aredn", "multiwan", "speed_iperf_port"), 5201, 1, 65535);
+let duration = bounded(uciMesh.get("aredn", "multiwan", "speed_iperf_duration"), 10, 3, 60);
+let message = "";
+let error = "";
+if (request.env.REQUEST_METHOD === "PUT") {
+    const action = request.args.action || "";
+    if (action === "save-speed") {
+        const nextMethod = allowed(request.args.speed_test_method || "cloudflare", [ "cloudflare", "iperf3" ], "cloudflare");
+        const nextPayload = allowed(request.args.speed_test_payload || "5000000", [ "1000000", "5000000", "10000000", "20000000" ], "5000000");
+        const nextTtl = bounded(request.args.speed_result_ttl, 21600, 900, 86400);
+        const nextNode = request.args.speed_node || "";
+        const nextPort = bounded(request.args.speed_iperf_port, 5201, 1, 65535);
+        const nextDuration = bounded(request.args.speed_iperf_duration, 10, 3, 60);
+        if (!validNode(nextNode)) error = "Remote node may contain only letters, numbers, dots, and dashes";
+        else {
+            uciMesh.set("aredn", "multiwan", "speed_test_method", nextMethod);
+            uciMesh.set("aredn", "multiwan", "speed_test_payload", nextPayload);
+            uciMesh.set("aredn", "multiwan", "speed_result_ttl", nextTtl);
+            uciMesh.set("aredn", "multiwan", "speed_node", nextNode);
+            uciMesh.set("aredn", "multiwan", "speed_iperf_port", nextPort);
+            uciMesh.set("aredn", "multiwan", "speed_iperf_duration", nextDuration);
+            uciMesh.commit("aredn");
+            method = nextMethod; payload = nextPayload; ttl = nextTtl; node = nextNode; port = nextPort; duration = nextDuration;
+            message = "Speed-test settings saved";
+        }
+    }
+    else if (action === "test" || action === "test-all") {
+        const selected = request.args.interface || "";
+        const runMethod = allowed(request.args.method || method, [ "cloudflare", "iperf3" ], method);
+        if (fs.access("/tmp/wan-speed/.lock")) error = "Another throughput test is already running";
+        else if (action === "test-all") {
+            system(`/usr/local/bin/wan-speed-test test-all ${runMethod} ${payload} >/dev/null 2>&1 &`);
+            message = "Sequential speed test requested for all enabled WANs";
+        }
+        else {
+            let ok = false; for (let i = 0; i < length(interfaces); i++) if (interfaces[i].name === selected) ok = true;
+            if (!ok) error = "Invalid WAN speed-test request";
+            else {
+                system(`/usr/local/bin/wan-speed-test test ${selected} ${runMethod} ${payload} >/dev/null 2>&1 &`);
+                message = `${wanLabel(selected)} speed test requested`;
+            }
+        }
+    }
+    else if (action === "clear") {
+        const selected = request.args.interface || "";
+        let ok = false; for (let i = 0; i < length(interfaces); i++) if (interfaces[i].name === selected) ok = true;
+        if (!ok) error = "Invalid clear request";
+        else { system(`/usr/local/bin/wan-speed-test clear ${selected} >/dev/null 2>&1`); message = `${wanLabel(selected)} result cleared`; }
+    }
+    else error = "Invalid speed-test action";
+}
+%}
+<div class="dialog pollywan-dialog pollywan-scroll-dialog">
+    {{_R("dialog-header", "Connection speed test")}}
+    <div id="link-calibration-dialog" hx-get="{{request.env.REQUEST_URI}}" hx-trigger="every 3s [document.visibilityState === 'visible']" hx-select="#link-calibration-dialog" hx-target="this" hx-swap="outerHTML show:none">
+        {% if (error) { %}<div class="pw-notice pw-notice-error"><b>{{error}}</b></div>{% } else if (message) { %}<div class="pw-notice pw-notice-ok">{{message}}</div>{% } %}
+        <form id="speed-test-form">
+            <div class="pw-method-grid">
+                <label class="pw-method"><input type="radio" name="speed_test_method" value="iperf3" {{method === "iperf3" ? "checked" : ""}}><strong>AREDN node test</strong><span>Measures node-to-node throughput over an existing WAN tunnel. Not a general Internet speed test.</span></label>
+                <label class="pw-method"><input type="radio" name="speed_test_method" value="cloudflare" {{method !== "iperf3" ? "checked" : ""}}><strong>Internet test - Cloudflare</strong><span>Measures the public Internet path selected by your ISP and shows public IP plus Cloudflare edge location.</span></label>
+            </div>
+            <div class="pw-notice">This test measures throughput between two AREDN nodes over the selected path. It may not represent general Internet performance.</div>
+            <div class="pw-notice">Cloudflare uses Anycast routing. The displayed location is the edge your ISP actually selected, not necessarily the geographically closest location.</div>
+            <div class="cols"><div><div class="o">Remote AREDN node name</div><div class="m">Safe hostname characters only. The node must already run an iperf3 server.</div></div><div class="pw-field"><input name="speed_node" type="text" maxlength="253" value="{{node}}" placeholder="node.example.local.mesh"></div></div>
+            <div class="cols"><div><div class="o">iperf3 port / duration</div><div class="m">Reverse mode is used so the result represents data received locally.</div></div><div class="pw-field pw-inline"><input name="speed_iperf_port" type="number" min="1" max="65535" value="{{port}}"><input name="speed_iperf_duration" type="number" min="3" max="60" value="{{duration}}"> s</div></div>
+            <div class="cols"><div><div class="o">Payload size / result lifetime</div><div class="m">Estimated Internet-test data use: {{payloadLabel(payload)}} per WAN tested.</div></div><div class="pw-field pw-inline"><select name="speed_test_payload"><option value="1000000" {{payload === "1000000" ? "selected" : ""}}>1 MB</option><option value="5000000" {{payload === "5000000" ? "selected" : ""}}>5 MB</option><option value="10000000" {{payload === "10000000" ? "selected" : ""}}>10 MB</option><option value="20000000" {{payload === "20000000" ? "selected" : ""}}>20 MB</option></select><input name="speed_result_ttl" type="number" min="900" max="86400" value="{{ttl}}"> s</div></div>
+        </form>
+        <div class="pw-actions"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML show:none" hx-include="#speed-test-form" hx-vals='{"action":"save-speed"}'>Save settings</button><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML show:none" hx-include="#speed-test-form" hx-vals='{"action":"test-all","method":"cloudflare"}'>Test all enabled WANs</button></div>
+        <hr>
+        {% for (let i = 0; i < length(interfaces); i++) { const item = interfaces[i]; const r = resultFor(item.name); const state = stateText(r, item.enabled, ttl); %}
+        <div class="cols"><div><div class="o">{{item.label}}</div><div class="m">{{state}}{{r && r.message ? " - " + r.message : ""}}</div></div><div class="pw-result"><div>{{r && r.valid ? sprintf("%.1f Mbps", r.mbps) : state}}</div><div class="m">{{r && r.valid ? (r.class + " " + (r.colo || r.remote_node || "") + " " + (r.public_ip || "")) : "No valid result"}}</div></div><div class="pw-actions pw-actions-tight"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML show:none" hx-include="#speed-test-form" hx-vals='{"action":"test","interface":"{{item.name}}","method":"cloudflare"}' {{!item.enabled || fs.access("/tmp/wan-speed/.lock") ? "disabled" : ""}}>Test {{item.label}}</button><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML show:none" hx-include="#speed-test-form" hx-vals='{"action":"test","interface":"{{item.name}}","method":"iperf3"}' {{!item.enabled || fs.access("/tmp/wan-speed/.lock") ? "disabled" : ""}}>Node test</button><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML show:none" hx-vals='{"action":"clear","interface":"{{item.name}}"}'>Clear</button></div></div>
+        {% if (i + 1 < length(interfaces)) { %}<hr>{% } %}
+        {% } %}
+    </div>
+    {{_R("dialog-footer", "nocancel")}}
+    <script>(function(){ {{_R("open")}} htmx.on("#dialog-done", "click", _ => htmx.ajax("GET", "/a/u-link-calibration", { target: "#link-calibration", swap: "outerHTML" })); })();</script>
+</div>

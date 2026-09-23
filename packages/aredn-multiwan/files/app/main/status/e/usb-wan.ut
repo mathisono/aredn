@@ -1,0 +1,84 @@
+{%
+const supportedBoards = { "mikrotik,routerboard-952ui-5ac2nd": true, "mikrotik,hap-ac2": true, "mikrotik,hap-ac3": true };
+if (!auth.isAdmin) { response.statusCode = 403; print("Administrator authentication required"); return; }
+if (!supportedBoards[hardware.getBoardModel().id]) { response.statusCode = 404; print("USB WAN is not available on this device"); return; }
+
+function readState() { const v = fs.readfile("/tmp/wan3/state.json"); if (!v) return null; try { return json(v); } catch (_) { return null; } }
+
+let message = "";
+let error = "";
+if (request.env.REQUEST_METHOD === "PUT") {
+    const action = request.args.action || "save";
+    if (action === "save") {
+        const enable = request.args.wan3_enable === "on" ? "1" : "0";
+        const device = request.args.wan3_device || "auto";
+        if (device !== "auto" && !match(device, /^[A-Za-z0-9_.:-]+$/)) error = "USB interface must be auto or a valid Linux network-interface name";
+        else {
+            uciMesh.set("aredn", "multiwan", "wan3_enable", enable);
+            uciMesh.set("aredn", "multiwan", "wan3_device", device);
+            if (enable === "0" && (uciMesh.get("aredn", "multiwan", "active") || "wan") === "wan3") {
+                uciMesh.set("aredn", "multiwan", "active", "wan");
+                uciMesh.set("aredn", "multiwan", "selection_mode", "manual");
+            }
+            uciMesh.commit("aredn");
+            if (uciMesh.get("aredn", "multiwan", "enabled") === "1") system("/usr/local/bin/wan3-manager usb-apply >/dev/null 2>&1; /usr/local/bin/wan-sla once >/dev/null 2>&1 &");
+            message = enable === "1" ? "Phone USB tether settings saved" : "WAN 3 disabled";
+        }
+    }
+    else if (action === "activate") {
+        uciMesh.set("aredn", "multiwan", "enabled", "1");
+        uciMesh.set("aredn", "multiwan", "wan3_enable", "1");
+        uciMesh.set("aredn", "multiwan", "selection_mode", "manual");
+        uciMesh.set("aredn", "multiwan", "active", "wan3");
+        uciMesh.commit("aredn");
+        system("rm -f /tmp/wan-sla/inhibit; /etc/init.d/wan3-manager restart >/dev/null 2>&1 &");
+        message = "Phone USB tether selected; the controller will use it when wan3 obtains DHCP and passes health checks";
+    }
+    else if (action === "fallback") {
+        uciMesh.set("aredn", "multiwan", "selection_mode", "manual");
+        uciMesh.set("aredn", "multiwan", "active", "wan");
+        uciMesh.commit("aredn");
+        system("/usr/local/bin/wan-sla once >/dev/null 2>&1 &");
+        message = "WAN 1 requested";
+    }
+    else error = "Invalid USB WAN action";
+}
+
+const enabled = uciMesh.get("aredn", "multiwan", "wan3_enable") === "1";
+const state = readState();
+let iface = null;
+try { iface = ubus.call("network.interface.wan3", "status"); } catch (_) {}
+const addresses = (iface && iface["ipv4-address"]) || [];
+const address = length(addresses) ? addresses[0].address : "";
+const device = iface && (iface.l3_device || iface.device) || state && state.device || "";
+const routes = iface && iface.route || [];
+let gateway = "";
+for (let i = 0; i < length(routes); i++) if (routes[i].target === "0.0.0.0") { gateway = routes[i].nexthop || ""; break; }
+const linkState = iface && iface.up ? "up" : "down";
+let statusText = "Disabled";
+if (enabled) {
+    if (!device) statusText = state && match(state.message || "", /kernel USB-network support/) ? "No compatible USB network driver" : "Waiting for phone";
+    else if (!iface) statusText = "USB device detected";
+    else if (!length(addresses)) statusText = "Requesting DHCP";
+    else statusText = "Connected";
+}
+const supportMessage = state && state.message || "Existing kernel USB-network support is checked only when PollyWAN and WAN 3 are enabled";
+%}
+<div class="dialog pollywan-dialog">
+    {{_R("dialog-header", "WAN 3: Android USB tether")}}
+    <div>
+        {% if (error) { %}<div class="pw-notice pw-notice-error"><b>{{error}}</b></div>{% } else if (message) { %}<div class="pw-notice pw-notice-ok">{{message}}</div>{% } %}
+        <div class="cols"><div><div class="o">Topology</div><div class="m">Connect an Android phone by USB and enable USB tethering on the phone. The phone supplies a normal DHCP Internet connection.</div></div><div style="flex:0;text-align:right"><div>{{statusText}}</div><div class="m">{{device || "no device"}} &middot; {{address || "no IPv4"}}</div></div></div>
+        <div class="cols"><div><div class="o">Existing kernel support</div><div class="m">{{supportMessage}}</div></div><div style="flex:0;text-align:right"><div>{{device || "none"}}</div><div class="m">{{iface && iface.up ? "USB network device" : "not active"}}</div></div></div>
+        <div class="cols"><div><div class="o">Detected device</div><div class="m">RNDIS, CDC Ethernet, or CDC NCM USB network interface</div></div><div style="flex:0;text-align:right"><div>{{device || "none"}}</div><div class="m">link {{linkState}}</div></div></div>
+        <div class="cols"><div><div class="o">IPv4 address</div><div class="m">Assigned by Android DHCP</div></div><div style="flex:0;text-align:right"><div>{{address || "none"}}</div><div class="m">gateway {{gateway || "none"}}</div></div></div>
+        <form id="usb-wan-form">
+            <div class="cols"><div><div class="o">Enable WAN 3 USB</div><div class="m">Auto-discovery considers only USB-backed network devices, never serial GPS TTYs</div></div><div style="flex:0"><input type="checkbox" name="wan3_enable" {{enabled ? "checked" : ""}}></div></div>
+            <div class="cols"><div><div class="o">hAP USB network interface</div><div class="m">Use auto, or enter the exact existing RNDIS/CDC interface; PollyWAN does not replace kernel modules</div></div><div style="flex:0"><input name="wan3_device" type="text" size="18" pattern="auto|[A-Za-z0-9_.:\-]+" value="{{uciMesh.get("aredn", "multiwan", "wan3_device") || "auto"}}" required></div></div>
+        </form>
+        {{_H("Use a data-capable USB cable, unlock the Android phone, open hotspot/tethering settings, and enable USB tethering. USB charging alone is insufficient. Supported phones normally expose RNDIS, CDC Ethernet, or CDC NCM, but driver availability depends on the AREDN kernel and hardware. WAN 3 disabled means PollyWAN does not touch USB networking. Serial GPS time service remains owned entirely by AREDN/gpsd.")}}
+        <div class="pw-actions"><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-include="#usb-wan-form" hx-vals='{"action":"save"}'>Save USB settings</button><div class="pw-spacer"></div><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"fallback"}'>Use WAN 1</button><button hx-put="{{request.env.REQUEST_URI}}" hx-target="#ctrl-modal" hx-swap="innerHTML" hx-vals='{"action":"activate"}' {{!enabled || !(iface && iface.up) ? "disabled" : ""}}>Use WAN 3 now</button></div>
+    </div>
+    {{_R("dialog-footer", "nocancel")}}
+    <script>(function(){ {{_R("open")}} htmx.on("#dialog-done", "click", _ => htmx.ajax("GET", "/a/u-usb-wan", { target: "#usb-wan", swap: "outerHTML" })); })();</script>
+</div>

@@ -1,0 +1,23 @@
+#!/bin/sh
+# Re-evaluate WAN3 only for USB-backed network devices. GPS serial devices
+# (/dev/ttyACM* and /dev/ttyUSB*) never enter the net hotplug class and are not
+# inspected or modified by this hook.
+
+[ "$(uci -c /etc/config.mesh -q get aredn.multiwan.enabled 2>/dev/null)" = 1 ] || exit 0
+[ "$(uci -c /etc/config.mesh -q get aredn.multiwan.wan3_enable 2>/dev/null)" = 1 ] || exit 0
+
+case "${ACTION:-}" in
+    add|remove|register|unregister)
+        name="${INTERFACE:-${DEVICENAME:-${DEVICE:-}}}"
+        case "$name" in
+            usb[0-9]*|rndis[0-9]*|wwan[0-9]*|enx*)
+                /usr/local/bin/wan3-manager usb-apply >/dev/null 2>&1 &
+                exit 0
+                ;;
+        esac
+        target="$(readlink -f "/sys/class/net/${name:-unknown}/device" 2>/dev/null || true)"
+        case "$target" in
+            *'/usb'*|*'/usb'*) /usr/local/bin/wan3-manager usb-apply >/dev/null 2>&1 & ;;
+        esac
+        ;;
+esac
