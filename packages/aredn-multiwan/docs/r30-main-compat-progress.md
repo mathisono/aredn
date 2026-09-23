@@ -5,7 +5,8 @@ Updated: 2026-09-23
 ## Frozen Baseline
 
 - Authoritative source: `aredn/aredn` main
-- Baseline SHA: `f1fb190d44318250f127bdfb2aeb232dcdfab3eb`
+- Baseline source SHA: `f1fb190d44318250f127bdfb2aeb232dcdfab3eb`
+- Validation baseline: AREDN nightly build from main at the same source SHA, not stable firmware and not mocks
 - Validation firmware: not yet matched to a nightly lab node
 - Stock versus patched nightly: pending
 
@@ -30,10 +31,10 @@ Updated: 2026-09-23
 - APK build: FAIL (`make -C openwrt package/aredn-multiwan/compile V=sc -j1`; blocked by missing target toolchain artifact `staging_dir/toolchain-mips_24kc_gcc-14.3.0_musl/lib/libgcc_s.so.*`)
 - Matching nightly lab node validation: NOT RUN
 - Commit: PASS
-- Push: NOT RUN
+- Push: PASS
 
 ## Remaining
 
 - Build/install the frozen baseline target toolchain or run the full AREDN package build path, then rebuild the r30 APK and record SHA256.
-- Validate only on a matching nightly lab node; stable firmware or mocks do not satisfy acceptance.
+- Validate only on an AREDN main/nightly lab node matching the frozen source SHA; stable firmware or mocks do not satisfy acceptance.
 - Do not flash or disrupt hub5 without authorization and recovery access.
