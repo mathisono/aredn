@@ -129,7 +129,6 @@ define Package/aredn-multiwan/install
 	$(INSTALL_DATA) ./docs/multiwan-mesh-wan.md $(1)/usr/share/doc/aredn-multiwan/
 	$(INSTALL_DATA) ./docs/multiwan-verification.md $(1)/usr/share/doc/aredn-multiwan/
 	$(INSTALL_DATA) ./docs/aredn-sysinfo-integration-plan.md $(1)/usr/share/doc/aredn-multiwan/
-	$(INSTALL_DATA) ./tools/openclaw-build-test-prompt.md $(1)/usr/share/doc/aredn-multiwan/
 endef
 
 $(eval $(call BuildPackage,aredn-multiwan))
