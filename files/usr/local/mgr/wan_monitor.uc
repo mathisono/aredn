@@ -34,6 +34,9 @@
 const WAN_TABLE = 28;
 const WAN_IFACE = "br-wan";
 const PATT = regexp(`default via ([0-9\.]+) dev ${WAN_IFACE}`);
+const POLLYWAN_REQUEST = "/var/run/pollywan/export-v1.json";
+const POLLYWAN_SCHEMA = 1;
+const POLLYWAN_MAX_AGE = 180;
 
 const c = uci.cursor();
 
@@ -42,6 +45,7 @@ const lan_to_local_wan = c.get("aredn", "@wan[0]", "lan_dhcp_route");
 const local_defaultroute = c.get("aredn", "@wan[0]", "local_defaultroute");
 const wan_passthrough = c.get("aredn", "@wan[0]", "passthrough");
 const wan_mode = c.get("setup", "globals", "wan_proto");
+const pollywan_enabled = c.get("aredn", "multiwan", "enabled") == "1";
 const addresses = [];
 const mon1 = c.get("aredn", "@wan[0]", "monitor1");
 const mon2 = c.get("aredn", "@wan[0]", "monitor2");
@@ -51,11 +55,116 @@ if (mon1) {
 if (mon2) {
     push(addresses, mon2);
 }
-if (! (length(addresses) > 0 && (mesh_to_local_wan == "1" || lan_to_local_wan == "1") && wan_passthrough == "0" && wan_mode != "disabled") ) {
+if (!pollywan_enabled && !(length(addresses) > 0 && (mesh_to_local_wan == "1" || lan_to_local_wan == "1") && wan_passthrough == "0" && wan_mode != "disabled")) {
     return exitApp();
 }
 
 let last_gw = null;
+
+function validDevice(value)
+{
+    return type(value) == "string" && match(value, /^[A-Za-z0-9_.:-]+$/);
+}
+
+function validIPv4(value)
+{
+    if (type(value) != "string" || !match(value, /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/)) {
+        return false;
+    }
+    const octets = split(value, ".");
+    for (let i = 0; i < 4; i++) {
+        const number = +octets[i];
+        if (number < 0 || number > 255 || `${number}` != octets[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function readPollyWANRequest()
+{
+    let request = null;
+    try {
+        request = json(fs.readfile(POLLYWAN_REQUEST));
+    }
+    catch (_) {
+        return null;
+    }
+    if (type(request) != "object" || request.schema_version != POLLYWAN_SCHEMA || request.eligible != true ||
+        !validDevice(request.device) || !validIPv4(request.source) ||
+        (request.gateway != null && request.gateway != "" && !validIPv4(request.gateway)) ||
+        type(request.monotonic_seconds) != "int" ||
+        clock(true)[0] - request.monotonic_seconds < 0 ||
+        clock(true)[0] - request.monotonic_seconds > POLLYWAN_MAX_AGE) {
+        return null;
+    }
+    return request;
+}
+
+function desiredRoute(prefix, request)
+{
+    const via = request.gateway ? ` via ${request.gateway}` : "";
+    return `${prefix}${via} dev ${request.device} src ${request.source} proto static metric 1`;
+}
+
+function routeMatches(prefix, request)
+{
+    const p = fs.popen(`/sbin/ip -4 route show table ${WAN_TABLE} ${prefix} 2>/dev/null`);
+    if (!p) {
+        return false;
+    }
+    const output = trim(p.read("all"));
+    p.close();
+    const via = request.gateway ? ` via ${request.gateway} ` : " ";
+    return index(`\n${output}\n`, `\n${prefix}${via}dev ${request.device} `) >= 0 &&
+        index(output, `src ${request.source}`) >= 0;
+}
+
+function routeExists(prefix)
+{
+    const p = fs.popen(`/sbin/ip -4 route show table ${WAN_TABLE} ${prefix} 2>/dev/null`);
+    if (!p) {
+        return false;
+    }
+    const found = trim(p.read("all")) != "";
+    p.close();
+    return found;
+}
+
+function deleteDefaultLikeRoutes()
+{
+    if (routeExists("default")) {
+        system(`/sbin/ip -4 route flush table ${WAN_TABLE} default > /dev/null 2>&1`);
+    }
+    if (routeExists("0.0.0.0/1")) {
+        system(`/sbin/ip -4 route flush table ${WAN_TABLE} 0.0.0.0/1 > /dev/null 2>&1`);
+    }
+    if (routeExists("128.0.0.0/1")) {
+        system(`/sbin/ip -4 route flush table ${WAN_TABLE} 128.0.0.0/1 > /dev/null 2>&1`);
+    }
+}
+
+function reconcilePollyWAN()
+{
+    const request = readPollyWANRequest();
+    if (!request) {
+        deleteDefaultLikeRoutes();
+        return;
+    }
+
+    const split = request.split_default == true;
+    if (!routeMatches("default", request) ||
+        (split && (!routeMatches("0.0.0.0/1", request) || !routeMatches("128.0.0.0/1", request))) ||
+        (!split && (routeExists("0.0.0.0/1") || routeExists("128.0.0.0/1")))) {
+        deleteDefaultLikeRoutes();
+        system(`/sbin/ip -4 route replace table ${WAN_TABLE} ${desiredRoute("default", request)} > /dev/null 2>&1`);
+        if (split) {
+            system(`/sbin/ip -4 route replace table ${WAN_TABLE} ${desiredRoute("0.0.0.0/1", request)} > /dev/null 2>&1`);
+            system(`/sbin/ip -4 route replace table ${WAN_TABLE} ${desiredRoute("128.0.0.0/1", request)} > /dev/null 2>&1`);
+        }
+        log.syslog(log.LOG_INFO, "PollyWAN export request reconciled");
+    }
+}
 
 function isInternetReachable(addrs)
 {
@@ -89,7 +198,7 @@ function isInterfaceUp()
 function isGwFound()
 {
     let found = false;
-    p = fs.popen(`/sbin/ip route show table ${WAN_TABLE} 2>/dev/null`);
+    const p = fs.popen(`/sbin/ip route show table ${WAN_TABLE} 2>/dev/null`);
     if (p) {
         for (let line = p.read("line"); length(line); line = p.read("line")) {
             const m = match(trim(line), PATT);
@@ -103,11 +212,31 @@ function isGwFound()
     return found;
 }
 
+function discoverWanGateway()
+{
+    const p = fs.popen(`/sbin/ip -4 route show table main default dev ${WAN_IFACE} 2>/dev/null`);
+    if (p) {
+        const m = match(trim(p.read("all")), regexp(`default via ([0-9\\.]+) dev ${WAN_IFACE}`));
+        p.close();
+        if (m) {
+            last_gw = m[1];
+        }
+    }
+}
+
 function main()
 {
+    if (pollywan_enabled) {
+        reconcilePollyWAN();
+        return waitForTicks(10);
+    }
+
     if (isInterfaceUp()) {
         const reachable = isInternetReachable(addresses);
         const found = isGwFound();
+        if (!last_gw) {
+            discoverWanGateway();
+        }
         if (last_gw) {
             if (reachable && !found) {
                 system(`/sbin/ip route add default via ${last_gw} dev ${WAN_IFACE} table ${WAN_TABLE} > /dev/null 2>&1`);
@@ -129,4 +258,4 @@ function main()
     return waitForTicks(60); // 1 minute
 }
 
-return waitForTicks(max(1, 120 - clock(true)[0]), main);
+return waitForTicks(pollywan_enabled ? 1 : max(1, 120 - clock(true)[0]), main);

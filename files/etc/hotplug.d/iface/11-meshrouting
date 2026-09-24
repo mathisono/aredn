@@ -70,17 +70,20 @@ if [ "${ACTION}" = "ifdown" ] || [ "${ACTION}" = "ifup" ] ; then
 
   #
   # When we bring up the WAN interface, setup the subnet in table 27 and the default route in table 28.
-  # Optional packages may coordinate table 28 themselves; when PollyWAN is
-  # enabled it publishes only an SLA-qualified proto static default.
+  # A patched native WAN monitor may coordinate table 28 from a validated
+  # PollyWAN request. The feature marker prevents a package setting from
+  # disabling stock routing on firmware which lacks that contract.
   #
   if [ "${INTERFACE}" = "wan" ]; then
     wan_net=$(ip route | grep "dev $DEVICE scope link" | sed 's/ .*$//')
     ip route del $wan_net table 27
     pollywan_enabled="$(uci -q -c /etc/config.mesh get aredn.multiwan.enabled)"
+    pollywan_native=0
+    [ "$pollywan_enabled" = "1" ] && [ -r /usr/share/aredn/features/pollywan-export-v1 ] && pollywan_native=1
     ip route del default table 28
     ip route del 0.0.0.0/1 table 28
     ip route del 128.0.0.0/1 table 28
-    if [ "${ACTION}" = "ifup" -a "${pollywan_enabled}" != "1" ] ; then
+    if [ "${ACTION}" = "ifup" -a "${pollywan_native}" != "1" ] ; then
       wan_gw=$(ip route | grep ^default.*${DEVICE} | sed 's/^default via \(.*\) dev.*$/\1/')
       if [ "$wan_gw" != "" ]; then
         ip route add $wan_net dev $DEVICE table 27
