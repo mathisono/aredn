@@ -9,7 +9,9 @@ cp /usr/bin/busybox "$ROOT/bin/busybox"
 cp /lib/x86_64-linux-gnu/libresolv.so.2 "$ROOT/lib/x86_64-linux-gnu/"
 cp /lib/x86_64-linux-gnu/libc.so.6 "$ROOT/lib/x86_64-linux-gnu/"
 cp /lib64/ld-linux-x86-64.so.2 "$ROOT/lib64/"
-for cmd in sh awk sed grep cat cp mv rm mkdir rmdir sort cmp chmod printf tr; do ln -s busybox "$ROOT/bin/$cmd"; done
+# Avoid BusyBox's /proc/self/exe noexec optimization in this proc-less chroot.
+for cmd in sh awk sed grep cat cp mv rm mkdir rmdir sort cmp chmod printf tr; do cp "$ROOT/bin/busybox" "$ROOT/bin/$cmd"; done
+cp /bin/dash "$ROOT/bin/sh"
 mknod -m 666 "$ROOT/dev/null" c 1 3 2>/dev/null || { : > "$ROOT/dev/null"; chmod 666 "$ROOT/dev/null"; }
 cp "$ROOT_SRC/files/usr/local/bin/wan-tunnel-guard" "$ROOT/usr/local/bin/"
 chmod 755 "$ROOT/usr/local/bin/wan-tunnel-guard"

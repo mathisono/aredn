@@ -14,7 +14,13 @@ cp /usr/bin/busybox "$ROOT/bin/busybox"
 cp /lib/x86_64-linux-gnu/libresolv.so.2 "$ROOT/lib/x86_64-linux-gnu/"
 cp /lib/x86_64-linux-gnu/libc.so.6 "$ROOT/lib/x86_64-linux-gnu/"
 cp /lib64/ld-linux-x86-64.so.2 "$ROOT/lib64/"
-for cmd in sh ash awk sed grep cat cp mv rm mkdir head sort printf; do ln -s busybox "$ROOT/bin/$cmd"; done
+# Use independent copies rather than BusyBox symlinks.  BusyBox ash may invoke
+# linked applets through /proc/self/exe, which is deliberately absent in this
+# minimal chroot and would make nested helpers such as jsonfilter's cat fail.
+for cmd in sh ash awk sed grep cat cp mv rm mkdir head sort printf; do cp "$ROOT/bin/busybox" "$ROOT/bin/$cmd"; done
+# Keep the fixture's command interpreter separate from BusyBox so nested
+# applets are executed normally instead of through BusyBox's noexec path.
+cp /bin/dash "$ROOT/bin/sh"
 mknod -m 666 "$ROOT/dev/null" c 1 3 2>/dev/null || { : > "$ROOT/dev/null"; chmod 666 "$ROOT/dev/null"; }
 cp "$ROOT_SRC/files/usr/local/bin/wan-route-cache" "$ROOT/usr/local/bin/"
 chmod 755 "$ROOT/usr/local/bin/wan-route-cache"
