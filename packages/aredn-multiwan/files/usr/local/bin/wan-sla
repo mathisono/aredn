@@ -26,6 +26,7 @@ LOCAL_DTD_DEFAULT_TABLE=23
 WAN1_TRANSPORT=unknown
 PACKAGE_VERSION=0.1.0-r30
 MANUAL_CHECK=0
+NATIVE_CONTRACT=/usr/share/aredn/features/pollywan-export-v1
 
 mkdir -p "$STATE_DIR" || exit 1
 
@@ -513,6 +514,8 @@ write_status()
     mesh_to_wan="$(aredn_wan_get mesh_to_local_wan)"; [ "$mesh_to_wan" = 1 ] || mesh_to_wan=0
     lan_to_mesh="$(aredn_wan_get lan_to_remote_wan)"; [ "$lan_to_mesh" = 1 ] || lan_to_mesh=0
     generated="$(date +%s)"
+    mesh_exported=false
+    [ "$table28" = 1 ] && [ "$mesh_to_wan" = 1 ] && mesh_exported=true
 
     active_health=unknown
     active_upstream=false
@@ -541,13 +544,14 @@ write_status()
 
     tmp="$STATUS_FILE.tmp.$$"
     {
-        printf '{"schema_version":2,"package_version":"%s","enabled":%s,"mode":"%s","active":"%s","active_health":"%s","active_upstream_reachable":%s,"active_gateway_reachable":%s,"active_device":%s,"active_source":%s,"active_gateway":%s,"active_private_table":%s,"selected_route_table":26,"selected_default":%s,"mesh_exported":%s,"mesh_export_table":28,"last_switch_epoch":%s,"last_export_change_epoch":%s,"generated_at_epoch":%s,"probe_endpoint":%s,"probe_reason":"%s","selected_bin":"%s","wan1_transport":"%s","message":"%s","table28_published":%s,"remote_mesh_default":%s,"local_dtd_default":%s,"mesh_to_wan":%s,"lan_to_mesh_wan":%s,"tunnel_guard":true,"time":"%s","candidates":[' \
+        printf '{"schema_version":2,"package_version":"%s","enabled":%s,"integration_supported":%s,"mode":"%s","active":"%s","active_health":"%s","active_upstream_reachable":%s,"active_gateway_reachable":%s,"active_device":%s,"active_source":%s,"active_gateway":%s,"active_private_table":%s,"selected_route_table":26,"selected_default":%s,"mesh_exported":%s,"mesh_export_table":28,"last_switch_epoch":%s,"last_export_change_epoch":%s,"generated_at_epoch":%s,"probe_endpoint":%s,"probe_reason":"%s","selected_bin":"%s","wan1_transport":"%s","message":"%s","table28_published":%s,"remote_mesh_default":%s,"local_dtd_default":%s,"mesh_to_wan":%s,"lan_to_mesh_wan":%s,"tunnel_guard":true,"time":"%s","candidates":[' \
             "$PACKAGE_VERSION" "$([ "$(uci_get enabled)" = 1 ] && echo true || echo false)" \
+            "$([ -r "$NATIVE_CONTRACT" ] && echo true || echo false)" \
             "$(json_escape "$mode")" "$(json_escape "$active")" "$(json_escape "$active_health")" "$active_upstream" "$active_gateway" \
             "$([ -n "$active_device" ] && printf '"%s"' "$(json_escape "$active_device")" || printf null)" \
             "$([ -n "$active_source" ] && [ "$active_source" != ' ' ] && printf '"%s"' "$(json_escape "$active_source")" || printf null)" \
             "$([ -n "$active_gateway_value" ] && [ "$active_gateway_value" != ' ' ] && printf '"%s"' "$(json_escape "$active_gateway_value")" || printf null)" \
-            "$active_private_table" "$selected_default" "$([ "$table28" = 1 ] && echo true || echo false)" \
+            "$active_private_table" "$selected_default" "$mesh_exported" \
             "$(last_epoch_or_null "$SWITCH_FILE")" "$(last_epoch_or_null "$EXPORT_CHANGE_FILE")" "$generated" \
             "$([ -n "$active_probe_endpoint" ] && [ "$active_probe_endpoint" != ' ' ] && printf '"%s"' "$(json_escape "$active_probe_endpoint")" || printf null)" "$(json_escape "$active_probe_reason")" \
             "$(json_escape "$selected_bin")" "$(json_escape "$WAN1_TRANSPORT")" "$(json_escape "$message")" \
@@ -583,15 +587,16 @@ write_status()
     active_next="$(cat "$STATE_DIR/next-probe.$active" 2>/dev/null || true)"; valid_uint "$active_next" || active_next=null
     ttmp="$TELEMETRY_FILE.tmp.$$"
     {
-        printf '{"schema_version":1,"package_version":"%s","enabled":%s,"mode":"%s","active":%s,"health":"%s","gateway_reachable":%s,"upstream_reachable":%s,"selection_healthy":%s,"export_eligible":%s,"device":%s,"source":%s,"gateway":%s,"private_table":%s,"selected_table":%s,"mesh_exported":%s,"export_table":28,"probe_endpoint":%s,"probe_reason":"%s","next_probe_epoch":%s,"last_switch_epoch":%s,"last_export_change_epoch":%s,"generated_at_epoch":%s,"candidates":[' \
-            "$PACKAGE_VERSION" "$([ "$(uci_get enabled)" = 1 ] && echo true || echo false)" "$(json_escape "$mode")" \
+        printf '{"schema_version":1,"package_version":"%s","enabled":%s,"integration_supported":%s,"mode":"%s","active":%s,"health":"%s","gateway_reachable":%s,"upstream_reachable":%s,"selection_healthy":%s,"export_eligible":%s,"device":%s,"source":%s,"gateway":%s,"private_table":%s,"selected_table":%s,"mesh_exported":%s,"export_table":28,"probe_endpoint":%s,"probe_reason":"%s","next_probe_epoch":%s,"last_switch_epoch":%s,"last_export_change_epoch":%s,"generated_at_epoch":%s,"candidates":[' \
+            "$PACKAGE_VERSION" "$([ "$(uci_get enabled)" = 1 ] && echo true || echo false)" \
+            "$([ -r "$NATIVE_CONTRACT" ] && echo true || echo false)" "$(json_escape "$mode")" \
             "$(case "$active" in wan|wan2|wan3) printf '"%s"' "$active" ;; *) printf null ;; esac)" \
             "$(json_escape "$health")" "$active_gateway" "$active_upstream" "$active_selection_healthy" "$active_export_eligible" \
             "$([ -n "$active_device" ] && printf '"%s"' "$(json_escape "$active_device")" || printf null)" \
             "$([ -n "$active_source" ] && [ "$active_source" != ' ' ] && printf '"%s"' "$(json_escape "$active_source")" || printf null)" \
             "$([ -n "$active_gateway_value" ] && [ "$active_gateway_value" != ' ' ] && printf '"%s"' "$(json_escape "$active_gateway_value")" || printf null)" \
             "$active_private_table" "$([ "$selected_default" = null ] && echo null || echo 26)" \
-            "$([ "$table28" = 1 ] && echo true || echo false)" \
+            "$mesh_exported" \
             "$([ -n "$active_probe_endpoint" ] && [ "$active_probe_endpoint" != ' ' ] && printf '"%s"' "$(json_escape "$active_probe_endpoint")" || printf null)" "$(json_escape "$active_probe_reason")" "$active_next" \
             "$(last_epoch_or_null "$SWITCH_FILE")" "$(last_epoch_or_null "$EXPORT_CHANGE_FILE")" "$generated"
         first=1
@@ -635,7 +640,6 @@ evaluate_once()
     fi
     trap 'rm -rf "$LOCK_DIR"' EXIT HUP INT TERM
 
-    /usr/local/bin/wan-tunnel-guard apply >/dev/null 2>&1 || true
     [ -r "$CANDIDATE_FILE" ] && cp "$CANDIDATE_FILE" "$CANDIDATE_FILE.last" 2>/dev/null || true
     : > "$CANDIDATE_FILE"
 
@@ -655,6 +659,15 @@ evaluate_once()
         rm -rf "$LOCK_DIR"; trap - EXIT HUP INT TERM
         return 0
     fi
+
+    if [ ! -r "$NATIVE_CONTRACT" ]; then
+        : > "$CANDIDATE_FILE"
+        write_status "$mode" "$(uci_get active)" unknown 'native export contract v1 unavailable; firmware unsupported and no network changes were applied'
+        rm -rf "$LOCK_DIR"; trap - EXIT HUP INT TERM
+        return 4
+    fi
+
+    /usr/local/bin/wan-tunnel-guard apply >/dev/null 2>&1 || true
 
     WAN1_TRANSPORT="$(/usr/local/bin/wan-port-manager wan-transport 2>/dev/null)"
     if [ $? -ne 0 ]; then

@@ -13,7 +13,7 @@
 <p>A failed external probe removes the mesh-exported default immediately, while local selection may temporarily remain during its configured failure hysteresis. A recovered connection must pass multiple observations and the export hold-down before PollyWAN publishes it to the mesh again.</p>
 <p>The optional secondary probe is attempted only after the primary probe fails. The endpoint is tested through the candidate source address with <code>curl --interface "$SOURCE" --proxy ''</code> and is not satisfied through another WAN. Cloudflare speed tests use the same direct source-bound path. Node-to-node iperf3 tests are unchanged.</p>
 <h2>Recovery</h2>
-<p>Use the PollyWAN disable action or remove the package to restore ordinary AREDN WAN behavior. Route rollback restores main, table 26, table 27, and table 28 snapshots after failed selection.</p>
+<p>Use the PollyWAN disable action or remove the package to restore ordinary AREDN WAN behavior. Route rollback restores package-owned main, table 26, and table 27 state after failed selection; the native AREDN WAN monitor is the sole table 28 owner.</p>
 <h2>hAP Ports &amp; XLinks</h2>
 <p>When PollyWAN Ethernet port-role control is enabled, the hAP Ports &amp; XLinks page replaces AREDN's normal advanced port configuration page for that device.</p>
 <p>XLinks remain normal AREDN XLinks. They are stored in the normal xlink UCI configuration and are not Internet WAN candidates.</p>

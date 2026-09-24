@@ -4,6 +4,7 @@
 # inspected or modified by this hook.
 
 [ "$(uci -c /etc/config.mesh -q get aredn.multiwan.enabled 2>/dev/null)" = 1 ] || exit 0
+[ -r /usr/share/aredn/features/pollywan-export-v1 ] || exit 0
 [ "$(uci -c /etc/config.mesh -q get aredn.multiwan.wan3_enable 2>/dev/null)" = 1 ] || exit 0
 
 case "${ACTION:-}" in

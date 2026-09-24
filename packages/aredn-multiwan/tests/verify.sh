@@ -42,6 +42,10 @@ docs/multiwan-link-calibration.md
 docs/multiwan-mesh-wan.md
 docs/multiwan-verification.md
 docs/aredn-sysinfo-integration-plan.md
+docs/r30-main-development-plan.md
+docs/main-compatibility-matrix.md
+docs/adr/route-ownership-main.md
+docs/main-migration-runbook.md
 tools/openclaw-build-test-prompt.md
 tools/sync-integration.sh
 tests/test-selection-model.py
@@ -178,6 +182,8 @@ require_text "$PORTS" 'mikrotik,hap-ac2|mikrotik,hap-ac3) echo dsa'
 require_text "$PORTS" 'at least one Ethernet port must remain LAN'
 require_text "$PORTS" 'schedule_rollback'
 require_text "$PORTS" 'POLLYWAN_TEST_MODE'
+require_text "$PORTS" 'NATIVE_CONTRACT=/usr/share/aredn/features/pollywan-export-v1'
+require_text "$PORTS" 'Ethernet roles were not applied'
 require_text "$PORTS" 'pending-token'
 require_text "$PORTS" 'confirm_roles'
 require_text "$PORTS" 'restore_backups'
@@ -216,6 +222,9 @@ reject_text "$WAN3" 'gpsd'
 reject_text "$WAN3" 'usb_passthrough'
 require_text files/etc/hotplug.d/net/95-wan3-manager 'wan3_enable'
 require_text files/etc/hotplug.d/net/95-wan3-manager '/sys/class/net/'
+require_text files/etc/hotplug.d/net/95-wan3-manager '/usr/share/aredn/features/pollywan-export-v1'
+require_text files/etc/hotplug.d/iface/95-wan3-manager '/usr/share/aredn/features/pollywan-export-v1'
+require_text files/etc/init.d/wan3-manager 'Native export contract v1 unavailable; controller remains non-mutating'
 
 # Private route tables, selected-route transaction, Babel, and Mesh WAN.
 CACHE=files/usr/local/bin/wan-route-cache
@@ -225,9 +234,14 @@ require_text "$CACHE" 'wan3) printf '\''103|83'
 require_text "$CACHE" 'from "$source/32" lookup "$table"'
 require_text "$WAN3" 'LOCAL_TABLE=26'
 require_text "$WAN3" 'LOCAL_SUBNET_TABLE=27'
-require_text "$WAN3" 'BABEL_EXPORT_TABLE=28'
 require_text "$WAN3" 'REMOTE_MESH_TABLE=22'
 require_text "$WAN3" 'LOCAL_DTD_DEFAULT_TABLE=23'
+require_text "$WAN3" 'NATIVE_CONTRACT=/usr/share/aredn/features/pollywan-export-v1'
+require_text "$WAN3" 'EXPORT_REQUEST_FILE="$EXPORT_REQUEST_DIR/export-v1.json"'
+require_text "$WAN3" 'write_export_request()'
+require_text "$WAN3" 'withdraw_export_request()'
+require_text "$WAN3" 'monotonic_seconds()'
+require_text "$WAN3" 'contract) native_contract_available'
 require_text "$WAN3" 'LAN_RULE_PREF=44'
 require_text "$WAN3" 'snapshot_routes'
 require_text "$WAN3" 'restore_route_snapshot'
@@ -238,7 +252,9 @@ require_text "$WAN3" 'replace_default_if_needed "$LOCAL_TABLE" "$device" "$sourc
 require_text "$WAN3" 'replace_default_if_needed main "$device" "$source" "$gateway" 1'
 require_text "$WAN3" 'default_route_matches'
 require_text "$WAN3" 'replace_default_if_needed'
-require_text "$WAN3" 'withdraw_export_if_needed'
+reject_text "$WAN3" 'ip -4 route flush table 28'
+reject_text "$WAN3" 'ip -4 route replace table 28'
+reject_text "$WAN3" 'ip -4 route add table 28'
 require_text "$WAN3" 'table 22 remote Mesh WAN is available'
 require_text "$WAN3" 'table 23 local DtD default is available'
 require_text "$WAN3" 'local_dtd_default'
@@ -251,6 +267,7 @@ reject_text "$WAN3" 'HTTP CONNECT'
 
 # Adaptive SLA algorithm.
 SLA=files/usr/local/bin/wan-sla
+require_text "$SLA" 'integration_supported'
 require_text "$SLA" 'WAN1_TRANSPORT=unknown'
 require_text "$SLA" 'wan-port-manager wan-transport'
 require_text "$SLA" 'for name in wan wan2 wan3'
@@ -406,7 +423,7 @@ require_text files/app/main/status/e/wan-policy.ut 'Automatic'
 reject_text files/app/main/status/e/wan-policy.ut '>Availability<'
 reject_text files/app/main/status/e/wan-policy.ut '>Adaptive speed bins<'
 require_text files/app/partial/multiwan-page.ut 'runtimeState(enabled, status)'
-require_text files/app/partial/multiwan-page.ut 'Disabled", "Idle", "Checking", "Healthy", "Degraded", "Holding", "Failing over", "No eligible WAN'
+require_text files/app/partial/multiwan-page.ut 'Disabled", "Unsupported", "Idle", "Checking", "Healthy", "Degraded", "Holding", "Failing over", "No eligible WAN'
 require_text files/app/partial/multiwan-page.ut 'pw-state-current'
 require_text files/app/partial/multiwan-page.ut 'pw-state-inactive'
 require_text files/app/partial/multiwan-page.ut 'item === currentRuntime ? "pw-state-current " + runtimeTone(item) : "pw-state-inactive"'
@@ -485,7 +502,7 @@ require_text tools/openclaw-build-test-prompt.md 'main'
 require_text tools/openclaw-build-test-prompt.md 'Wi-Fi client'
 require_text tools/openclaw-build-test-prompt.md 'r30 requirements'
 [ "$(wc -c < tools/openclaw-build-test-prompt.md)" -lt 2000 ] || fail 'OpenClaw prompt exceeds 2000 characters'
-require_text SYNC_SOURCE 'standalone_branch=main'
+require_text SYNC_SOURCE 'standalone_branch=agent/pollywan-main-compat'
 require_text SYNC_SOURCE 'integration_branch=agent/pollywan-main-compat'
 require_text SYNC_SOURCE 'sync_contract=standalone-root-equals-integration-subtree'
 require_text tools/sync-integration.sh 'rsync -rnic --delete --exclude .git'

@@ -6,6 +6,7 @@ function runtimeState(enabled, status)
     // Deterministic dashboard state map: disabled, scheduler/evaluation, active upstream/export health, route transition, then no eligible fallback.
     if (!enabled) return "Disabled";
     if (!status) return "Idle";
+    if (status.integration_supported === false) return "Unsupported";
     if (status.health === "checking" || status.probe_reason === "manual_check") return "Checking";
     if (status.health === "switching" || status.health === "failover") return "Failing over";
     if (!status.active) return "No eligible WAN";
@@ -20,6 +21,7 @@ function runtimeTone(state)
     if (state === "Checking") return "pw-state-info";
     if (state === "Degraded" || state === "Holding" || state === "Failing over") return "pw-state-warn";
     if (state === "No eligible WAN") return "pw-state-bad";
+    if (state === "Unsupported") return "pw-state-bad";
     return "";
 }
 const enabled = uciMesh.get("aredn", "multiwan", "enabled") === "1";
@@ -29,7 +31,7 @@ const active = uciMesh.get("aredn", "multiwan", "active") || "wan";
 const release = "r30";
 const status = readPolicyStatus();
 const currentRuntime = runtimeState(enabled, status);
-const runtimeStates = [ "Disabled", "Idle", "Checking", "Healthy", "Degraded", "Holding", "Failing over", "No eligible WAN" ];
+const runtimeStates = [ "Disabled", "Unsupported", "Idle", "Checking", "Healthy", "Degraded", "Holding", "Failing over", "No eligible WAN" ];
 %}
 <div id="multiwan-page" class="pw-page" hx-get="u-multiwan" hx-trigger="every 10s [document.visibilityState === 'visible']" hx-swap="outerHTML">
     <header class="pw-hero">
@@ -41,7 +43,7 @@ const runtimeStates = [ "Disabled", "Idle", "Checking", "Healthy", "Degraded", "
             <div class="pw-muted">Refreshes every 10 seconds</div>
         </div>
         <div class="pw-badges" aria-label="PollyWAN summary">
-            <span class="pw-badge {{enabled ? "pw-status-ok" : "pw-status-off"}}"><span class="pw-status-dot"></span>Controller {{enabled ? "Enabled" : "Disabled"}}</span>
+            <span class="pw-badge {{enabled && status && status.integration_supported === false ? "pw-status-bad" : enabled ? "pw-status-ok" : "pw-status-off"}}"><span class="pw-status-dot"></span>Controller {{enabled && status && status.integration_supported === false ? "Unsupported" : enabled ? "Enabled" : "Disabled"}}</span>
             <span class="pw-badge pw-status-active"><span class="pw-status-dot"></span>Active: {{labelPath(active)}}</span>
             <span class="pw-badge">{{mode}}</span>
             <span class="pw-badge">{{release}}</span>

@@ -13,7 +13,9 @@ setup_root()
     root="$1"
     mkdir -p "$root"/bin "$root"/sbin "$root"/usr/bin "$root"/usr/sbin "$root"/usr/local/bin \
         "$root"/etc/config.mesh "$root"/etc/aredn_include "$root"/etc/init.d "$root"/tmp/sysinfo \
-        "$root"/tmp/wan-sla "$root"/sys/class/net "$root"/dev "$root"/lib/x86_64-linux-gnu "$root"/lib64
+        "$root"/tmp/wan-sla "$root"/sys/class/net "$root"/dev "$root"/lib/x86_64-linux-gnu "$root"/lib64 \
+        "$root"/usr/share/aredn/features
+    printf '%s\n' 'test contract' > "$root/usr/share/aredn/features/pollywan-export-v1"
     cp /usr/bin/busybox "$root/bin/busybox"
     cp /lib/x86_64-linux-gnu/libresolv.so.2 "$root/lib/x86_64-linux-gnu/"
     cp /lib/x86_64-linux-gnu/libc.so.6 "$root/lib/x86_64-linux-gnu/"
@@ -27,7 +29,7 @@ setup_root()
     ln -s /bin/busybox "$root/sbin/ip"
     cp "$ROOT_SRC/files/usr/local/bin/wan-port-manager" "$root/usr/local/bin/"
     chmod 755 "$root/usr/local/bin/wan-port-manager"
-    mknod -m 666 "$root/dev/null" c 1 3
+    mknod -m 666 "$root/dev/null" c 1 3 2>/dev/null || { : > "$root/dev/null"; chmod 666 "$root/dev/null"; }
 
     cat > "$root/sbin/uci" <<'UCI'
 #!/bin/sh
@@ -116,6 +118,7 @@ aredn.multiwan.port5_dtd=1
 setup.globals.radio0_mode=off
 setup.globals.radio1_mode=off
 setup.globals.radio_vlan=3707
+setup.globals.lan1_intf=none
 firewall.@zone[0].name=wan
 firewall.@zone[0].network=wan
 firewall.@zone[1].name=wifi
@@ -191,6 +194,9 @@ run_ethernet_case()
     fi
     [ "$(chroot "$root" /sbin/uci get firewall.@zone[0].network)" = 'wan wan2' ]
     [ "$(chroot "$root" /sbin/uci get firewall.@zone[1].network)" = 'mesh fast wifi wifi0 wifi1' ]
+    # Current AREDN treats explicit "none" differently from an unset/default
+    # port assignment. PollyWAN must preserve that administrator intent.
+    [ "$(chroot "$root" /sbin/uci get setup.globals.lan1_intf)" = none ]
 
     assert_gps_unchanged "$root"
 
@@ -208,6 +214,7 @@ run_ethernet_case()
     [ "$(chroot "$root" /sbin/uci get aredn.multiwan.port_roles_enabled)" = 0 ]
     [ "$(chroot "$root" /sbin/uci get aredn.multiwan.wan2_enable)" = 0 ]
     [ "$(chroot "$root" /sbin/uci get aredn.multiwan.wan3_enable)" = 0 ]
+    [ "$(chroot "$root" /sbin/uci get setup.globals.lan1_intf)" = none ]
     echo "mock Ethernet port generation passed: $kind"
 }
 
@@ -288,8 +295,15 @@ run_conflict_cases()
         exit 1
     fi
     grep -F 'invalid:both-radios' "$root/tmp/transport.out" >/dev/null
+    rm "$root/usr/share/aredn/features/pollywan-export-v1"
+    if POLLYWAN_TEST_MODE=1 chroot "$root" /usr/local/bin/wan-port-manager apply >"$root/tmp/unsupported.out" 2>&1; then
+        echo 'Ethernet roles were applied without the native export contract' >&2
+        exit 1
+    fi
+    grep -F 'Native export contract v1 unavailable' "$root/tmp/wan-port-manager/state.json" >/dev/null
+    [ ! -e "$root/etc/aredn_include/.aredn-multiwan-ports" ]
     assert_gps_unchanged "$root"
-    echo 'mock Wi-Fi WAN conflict rejection passed'
+    echo 'mock Wi-Fi WAN conflict and unsupported-firmware rejection passed'
 }
 
 run_rf_vlan_cases()

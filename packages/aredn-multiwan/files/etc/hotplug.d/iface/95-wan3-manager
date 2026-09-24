@@ -2,6 +2,7 @@
 # Re-evaluate local WANs and tunnel policy after netifd events.
 
 [ "$(uci -c /etc/config.mesh -q get aredn.multiwan.enabled 2>/dev/null)" = 1 ] || exit 0
+[ -r /usr/share/aredn/features/pollywan-export-v1 ] || exit 0
 
 case "${INTERFACE:-}" in
     wan|wan2|wan3)

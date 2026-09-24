@@ -24,7 +24,8 @@ define Package/aredn-multiwan/description
  hAP ac2 and hAP ac3. It treats WAN 1 as either administrator-selected hAP Ethernet or the
  existing AREDN Wi-Fi client logical interface, assigns WAN 2 to Ethernet,
  keeps WAN 3 fixed to an Android USB RNDIS/CDC Ethernet tether, regulates the three local links using health and
- bounded speed classes, synchronizes AREDN routing tables 26/27/28, preserves
+ bounded speed classes, manages local routing tables 26/27 and requests export
+ through the native AREDN table-28 owner, preserves
  table 22 as the remote Mesh WAN fallback, reports table 23 local DtD defaults
  separately, prevents unqualified Babel default
  advertisement, and hard-blocks tunnel ingress from Internet defaults.
@@ -59,9 +60,12 @@ define Package/aredn-multiwan/prerm
 [ -n "$${IPKG_INSTROOT}" ] && exit 0
 mkdir -p /tmp/wan-sla
 touch /tmp/wan-sla/inhibit
+/sbin/uci -c /etc/config.mesh -q set aredn.multiwan.enabled=0 >/dev/null 2>&1 || true
+/sbin/uci -c /etc/config.mesh -q commit aredn >/dev/null 2>&1 || true
 /etc/init.d/wan3-manager stop >/dev/null 2>&1 || true
 /usr/local/bin/wan-port-manager restore >/dev/null 2>&1 || true
 /usr/local/bin/wan3-manager disable >/dev/null 2>&1 || true
+rm -f /var/run/pollywan/export-v1.json
 /usr/local/bin/wan-route-cache remove >/dev/null 2>&1 || true
 /usr/local/bin/wan-tunnel-guard remove >/dev/null 2>&1 || true
 /etc/init.d/wan3-manager disable >/dev/null 2>&1 || true

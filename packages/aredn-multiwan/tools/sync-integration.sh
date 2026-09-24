@@ -17,14 +17,17 @@ MODE="$1"
 AREDN_DIR="$2"
 case "$MODE" in check|apply) ;; *) usage ;; esac
 
-[ -d "$AREDN_DIR/.git" ] || { echo "not an AREDN git checkout: $AREDN_DIR" >&2; exit 1; }
+[ -d "$AREDN_DIR/.git" ] || [ -f "$AREDN_DIR/.git" ] || { echo "not an AREDN git checkout: $AREDN_DIR" >&2; exit 1; }
 DEST="$AREDN_DIR/packages/aredn-multiwan"
 mkdir -p "$DEST"
 
 RSYNC_ARGS="-a --delete --exclude .git"
 if [ "$MODE" = check ]; then
     # A clean dry-run prints no changed paths.
-    changes="$(rsync -rnic --delete --exclude .git "$ROOT/" "$DEST/" || true)"
+    if ! changes="$(rsync -rnic --delete --exclude .git "$ROOT/" "$DEST/")"; then
+        echo "rsync comparison failed" >&2
+        exit 1
+    fi
     if [ -n "$changes" ]; then
         printf '%s\n' "$changes"
         echo "PollyWAN repositories are not synchronized" >&2

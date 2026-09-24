@@ -134,7 +134,8 @@ if (request.env.REQUEST_METHOD === "PUT") {
         }
         const wanEnabled = request.args.wan_enable === "on";
         const wan2Enabled = request.args.wan2_enable === "on";
-        if (wifiWan.conflict) error = "Both radios are configured as WAN clients. AREDN supports only one radio owning logical WAN 1.";
+        if (action === "apply" && !fs.access("/usr/share/aredn/features/pollywan-export-v1")) error = "This firmware lacks the native PollyWAN export contract. Ethernet roles were not applied.";
+        else if (wifiWan.conflict) error = "Both radios are configured as WAN clients. AREDN supports only one radio owning logical WAN 1.";
         else if (lanCount < 1) error = "At least one Ethernet port must remain LAN";
         else if (wifiWan.active && wanCount > 0) error = `WAN 1 is ${wifiWan.label}; no Ethernet port may also be assigned to WAN 1`;
         else if (!wifiWan.active && wanEnabled && wanCount < 1) error = "WAN 1 is enabled but no port is assigned to WAN 1";

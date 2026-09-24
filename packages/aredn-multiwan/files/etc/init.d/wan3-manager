@@ -32,6 +32,12 @@ start_service()
         return 0
     fi
 
+    if ! /usr/local/bin/wan3-manager contract >/dev/null 2>&1; then
+        /usr/local/bin/wan3-manager unsupported >/dev/null 2>&1 || true
+        logger -t aredn-multiwan "Native export contract v1 unavailable; controller remains non-mutating"
+        return 0
+    fi
+
     /usr/local/bin/wan-port-manager reconcile >/dev/null 2>&1 || true
     /usr/local/bin/wan-route-cache all >/dev/null 2>&1 || true
     /usr/local/bin/wan-tunnel-guard apply >/dev/null 2>&1 || true
@@ -50,9 +56,11 @@ stop_service()
     mkdir -p /tmp/wan-sla
     touch /tmp/wan-sla/inhibit
     # Never leave a stale gateway advertised when monitoring is stopped.
-    if uci_enabled; then
+    if uci_enabled && /usr/local/bin/wan3-manager contract >/dev/null 2>&1; then
         /usr/local/bin/wan3-manager withdraw 'PollyWAN service stopped' 0 >/dev/null 2>&1 || true
         /usr/local/bin/wan-tunnel-guard apply >/dev/null 2>&1 || true
+    elif uci_enabled; then
+        /usr/local/bin/wan3-manager unsupported >/dev/null 2>&1 || true
     else
         /usr/local/bin/wan3-manager disable >/dev/null 2>&1 || true
         /usr/local/bin/wan-tunnel-guard remove >/dev/null 2>&1 || true

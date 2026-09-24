@@ -61,6 +61,7 @@ function wifiWanInfo()
 }
 
 const wifiWan = wifiWanInfo();
+const nativeIntegrationAvailable = fs.access("/usr/share/aredn/features/pollywan-export-v1");
 let message = "";
 let error = "";
 if (request.env.REQUEST_METHOD === "PUT") {
@@ -86,7 +87,10 @@ if (request.env.REQUEST_METHOD === "PUT") {
         const primaryCodes = normalizeCodes(requestedValue("health_expected_codes", uciMesh.get("aredn", "multiwan", "health_expected_codes") || "204"), "204");
         const secondaryCodes = normalizeCodes(requestedValue("health_secondary_expected_codes", uciMesh.get("aredn", "multiwan", "health_secondary_expected_codes") || "200,204"), "200,204");
 
-        if (enabled === "1" && wifiWan.conflict) {
+        if (enabled === "1" && !nativeIntegrationAvailable) {
+            error = "This firmware lacks the native PollyWAN export contract. PollyWAN remains disabled and non-mutating.";
+        }
+        else if (enabled === "1" && wifiWan.conflict) {
             error = "Both AREDN radios are configured as WAN clients. Only one radio may own logical WAN 1.";
         }
         else if (!validHttpsUrl(primaryUrl, true)) error = "Primary probe endpoint must be an HTTPS URL with a host and path.";

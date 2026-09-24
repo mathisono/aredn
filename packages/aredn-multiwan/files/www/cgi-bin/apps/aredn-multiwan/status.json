@@ -8,5 +8,5 @@ printf '\r\n'
 if [ -r /tmp/wan-sla/telemetry.json ]; then
     cat /tmp/wan-sla/telemetry.json
 else
-    printf '%s\n' '{"schema_version":1,"package_version":"0.1.0-r30","enabled":false,"mode":"manual","active":null,"health":"unknown","gateway_reachable":false,"upstream_reachable":false,"selection_healthy":false,"export_eligible":false,"device":null,"source":null,"gateway":null,"private_table":null,"selected_table":null,"mesh_exported":false,"export_table":28,"probe_endpoint":null,"probe_reason":"cache_unavailable","next_probe_epoch":null,"last_switch_epoch":null,"last_export_change_epoch":null,"generated_at_epoch":null,"candidates":[]}'
+    printf '%s\n' '{"schema_version":1,"package_version":"0.1.0-r30","enabled":false,"integration_supported":false,"mode":"manual","active":null,"health":"unknown","gateway_reachable":false,"upstream_reachable":false,"selection_healthy":false,"export_eligible":false,"device":null,"source":null,"gateway":null,"private_table":null,"selected_table":null,"mesh_exported":false,"export_table":28,"probe_endpoint":null,"probe_reason":"cache_unavailable","next_probe_epoch":null,"last_switch_epoch":null,"last_export_change_epoch":null,"generated_at_epoch":null,"candidates":[]}'
 fi

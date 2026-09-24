@@ -18,6 +18,7 @@ PENDING=$STATE_DIR/pending-token
 DEADLINE=$STATE_DIR/pending-deadline
 TIMER_PID=$STATE_DIR/rollback-pid
 FILES='bridge.network.user lan.network.user wan.network.user dtdlink.network.user swconfig swconfig.user'
+NATIVE_CONTRACT=/usr/share/aredn/features/pollywan-export-v1
 
 mkdir -p "$STATE_DIR" "$INCLUDE_DIR" || exit 1
 
@@ -622,9 +623,13 @@ case "$COMMAND" in
     ports) ports_tsv ;;
     gps-status) gps_status ;;
     wan-transport) wan_transport ;;
-    reconcile) reconcile ;;
+    reconcile)
+        [ -r "$NATIVE_CONTRACT" ] || { write_state unsupported 'Native export contract v1 unavailable; Ethernet roles were not reconciled'; exit 4; }
+        reconcile
+        ;;
     validate) validate_roles ;;
     apply)
+        [ -r "$NATIVE_CONTRACT" ] || { write_state unsupported 'Native export contract v1 unavailable; Ethernet roles were not applied'; exit 4; }
         acquire_lock || exit 3
         trap 'rm -rf "$LOCK_DIR"' EXIT HUP INT TERM
         apply_roles

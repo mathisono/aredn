@@ -26,6 +26,10 @@ if (request.env.REQUEST_METHOD === "PUT") {
         }
     }
     else if (action === "activate") {
+        if (!fs.access("/usr/share/aredn/features/pollywan-export-v1")) {
+            error = "This firmware lacks the native PollyWAN export contract. WAN 3 was not activated.";
+        }
+        else {
         uciMesh.set("aredn", "multiwan", "enabled", "1");
         uciMesh.set("aredn", "multiwan", "wan3_enable", "1");
         uciMesh.set("aredn", "multiwan", "selection_mode", "manual");
@@ -33,6 +37,7 @@ if (request.env.REQUEST_METHOD === "PUT") {
         uciMesh.commit("aredn");
         system("rm -f /tmp/wan-sla/inhibit; /etc/init.d/wan3-manager restart >/dev/null 2>&1 &");
         message = "Phone USB tether selected; the controller will use it when wan3 obtains DHCP and passes health checks";
+        }
     }
     else if (action === "fallback") {
         uciMesh.set("aredn", "multiwan", "selection_mode", "manual");

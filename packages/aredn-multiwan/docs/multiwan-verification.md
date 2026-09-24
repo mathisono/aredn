@@ -8,24 +8,20 @@
 
 The verifier checks package boundaries, executable modes, BusyBox shell syntax, metadata/dependencies, administrator-only UI handlers, DSA and swconfig port generation, Wi-Fi WAN ownership, rollback, GPS non-interference, WAN 3 network-only discovery, speed-test bounds, routing-table ownership, Babel guards, tunnel isolation, markup, documentation, and repository-sync metadata.
 
-Static success is not an APK build or physical-node pass.
+Static success is not an APK build or physical-node pass. A passing build is
+not matching-nightly runtime validation.
 
 ## 2. Package-only build
 
-In the AREDN integration checkout:
+In a clean AREDN integration clone pinned to the recorded main SHA:
 
 ```sh
-make openwrt-clean
-make feeds-update
-
-# hAP ac2/ac3
-make MAINTARGET=ipq40xx SUBTARGET=mikrotik prepare
-# hAP ac lite
-make MAINTARGET=ath79 SUBTARGET=mikrotik prepare
+make TARGET=ipq40xx-mikrotik feeds-update
+make TARGET=ipq40xx-mikrotik prepare V=s
 
 grep '^CONFIG_PACKAGE_aredn-multiwan=m$' openwrt/.config
-make -C openwrt package/aredn-multiwan/clean V=sc -j1
-make -C openwrt package/aredn-multiwan/compile V=sc -j1 2>&1 | tee /tmp/pollywan-r30-build.log
+make -C openwrt package/feeds/arednlocal/aredn-multiwan/clean V=sc -j1
+make -C openwrt package/feeds/arednlocal/aredn-multiwan/compile V=sc -j1 2>&1 | tee /tmp/pollywan-r30-build.log
 find openwrt/bin -name 'aredn-multiwan-0.1.0-r30.apk' -print -exec sha256sum {} \;
 ```
 
@@ -52,10 +48,11 @@ for t in 22 26 27 28 99 101 102 103; do ip -4 route show table "$t" > "/tmp/poll
 ip -4 route show table main > /tmp/pollywan-before/main
 ```
 
-Install without enabling:
+Verify the matching integration contract, then install without enabling:
 
 ```sh
 apk add --allow-untrusted /tmp/aredn-multiwan-0.1.0-r30.apk
+test -r /usr/share/aredn/features/pollywan-export-v1
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.enabled)" = 0 ]
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.port_roles_enabled)" = 0 ]
 [ "$(uci -c /etc/config.mesh get aredn.multiwan.wan3_enable)" = 0 ]
@@ -197,11 +194,12 @@ Expected:
 
 - table 26 = selected local default
 - table 27 = selected local connected subnet
-- table 28 = one protocol-static default only when Mesh to WAN is enabled and the selected bin meets `mesh_share_min_bin`
+- table 28 = a native-monitor-owned protocol-static default only when the package request is fresh, eligible, Mesh to WAN is enabled, and the selected bin meets `mesh_share_min_bin`
 - table 22 is untouched
-- a WAN netifd event immediately withdraws table 28
+- table 23 is untouched and remains distinct from table 22
+- a WAN netifd event immediately invalidates the export request; the native monitor withdraws table 28
 - `redistribute proto 3 ... deny` closes the stock protocol-boot race
-- route failure restores the previous main/26/27/28 snapshot
+- route failure restores the previous main/26/27 snapshot; only the native monitor changes table 28
 - no eligible local WAN leaves 26/27/28 empty, allowing table-22 fallback only through AREDN policy
 
 ## 10. Tunnel isolation

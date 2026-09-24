@@ -1,10 +1,16 @@
 # AREDN PollyWAN
 
-PollyWAN is an experimental installable package for the MikroTik hAP ac lite, hAP ac2, and hAP ac3. It adds a native AREDN dashboard for managing multiple local Internet connections while leaving the base AREDN image unchanged.
+PollyWAN is an experimental installable package for the MikroTik hAP ac lite, hAP ac2, and hAP ac3. r30 is the AREDN main/nightly-only development line; r29 remains the previous-stable line.
 
 PollyWAN is disabled and inert immediately after installation. It does not remap ports, change radio modes, scan USB devices, start WAN3, edit GPS settings, or publish a Mesh WAN default until an administrator explicitly enables those features.
 
 PollyWAN is experimental and is not an official AREDN release.
+
+Active r30 routing requires matching main-derived firmware containing the
+reviewed native export contract. The APK never overwrites core firmware files.
+On stock firmware without that contract, it reports unsupported and remains
+non-mutating. No r30 production release or nightly hardware validation is
+claimed by this branch.
 
 ## Features
 
@@ -23,9 +29,9 @@ PollyWAN is experimental and is not an official AREDN release.
 - MikroTik hAP ac2
 - MikroTik hAP ac3
 
-The current package release is `0.1.0-r30`.
+The current development package revision is `0.1.0-r30`.
 
-## Release files
+## Network roles
 
 - `wan` — WAN 1. When an AREDN radio is in client/WAN mode, the existing logical interface `wan` uses `wlan0` or `wlan1`. Otherwise WAN 1 uses administrator-selected hAP Ethernet port(s).
 - `wan2` — WAN 2 on administrator-selected Ethernet port(s).
@@ -36,41 +42,11 @@ Wi-Fi WAN and Ethernet WAN 1 are mutually exclusive because AREDN gives both the
 
 Mesh AP/PTP/station radios are not WAN candidates. On AREDN builds with the shared RF bridge, they remain on AREDN's `br-wifi` path and AREDN's `wifi` firewall zone. PollyWAN never moves logical networks `wifi` or `fast` into the WAN zone, and any configured RF VLAN must avoid PollyWAN's Ethernet VLANs 2, 3, 4, and 5.
 
-## Install From a GitHub Release
-
-Download the APK for the matching PollyWAN release from:
-
-```text
-https://github.com/mathisono/AREDN_PollyWAN/releases/tag/v0.1.0-r30
-```
-
-### Core PollyWAN APK
-
-```text
-aredn-multiwan-0.1.0-r30.apk
-SHA-256: 8c4893d48e0b9af3d4bef0a14d5c0ed28f6ebe98677d29e7a527f8194e705e23
-```
-
-The core APK provides WAN1 and WAN2 without the optional USB-driver bundle. On the tested AREDN 4.26.7.0 hAP ac2 image, it installs offline as a single local APK with no dependency downloads.
-
-### Optional WAN3 USB-driver bundle
-
-```text
-pollywan-usb-drivers-aredn-4.26.7.0-hap-ac2-k6.12.94.zip
-SHA-256: a3c5b8e7f9d2c4e1a6b3d7f5c9a2e1b4f6d8c7e3b9a0c4d5f1e7b2a1f3c4d5
-```
-
-> **Compatibility warning:** This bundle is only for AREDN 4.26.7.0 on a MikroTik hAP ac2 running kernel 6.12.94 with the exact kernel ABI listed in its manifest. Do not install it on another firmware version, board, architecture, or kernel.
-
-The optional bundle is required only when the installed AREDN firmware does not already provide compatible Android USB-network drivers. WAN1 and WAN2 remain fully usable without it.
-
-Verify downloaded release files with `SHA256SUMS-release.txt`.
-
-## Install the core APK
+## Install a reviewed development APK
 
 ### Recommended: AREDN web interface
 
-1. Download `aredn-multiwan-0.1.0-r30.apk` to your computer.
+1. Obtain the APK and SHA-256 from the matching reviewed development build.
 2. Log in to the AREDN node as an administrator.
 3. Open **Packages**.
 4. Under **Upload Package**, choose the PollyWAN APK.
@@ -100,13 +76,7 @@ Do not run `node-setup`, reload networking, or apply port roles merely to finish
 ssh root@NODE
 cd /tmp
 
-VERSION='0.1.0-r30'
-TAG="v${VERSION}"
-APK="aredn-multiwan-${VERSION}.apk"
-
-curl -fL --retry 3 \
-  -o "$APK" \
-  "https://github.com/mathisono/AREDN_PollyWAN/releases/download/${TAG}/${APK}"
+APK='aredn-multiwan-0.1.0-r30.apk'
 
 sha256sum "$APK"
 
@@ -119,11 +89,13 @@ apk add --no-network --allow-untrusted \
 /etc/init.d/uhttpd restart
 ```
 
-Compare the SHA-256 value with `SHA256SUMS-release.txt` before installing.
+Compare the SHA-256 value with the retained build evidence before installing.
 
 ### Upgrade
 
-Use the same **Packages** → **Upload Package** workflow and select the newer APK. A normal upgrade preserves PollyWAN UCI configuration and confirmed Ethernet-port roles.
+Use the same **Packages** → **Upload Package** workflow and select the newer
+APK only when its AREDN source, feeds, architecture, and kernel identity match
+the test firmware. Review migration settings before re-enabling.
 
 ## First-time setup
 
@@ -247,82 +219,21 @@ Possible WAN3 states include:
 
 `USB network driver unavailable` does not indicate a general PollyWAN failure. WAN1 and WAN2 continue to operate normally.
 
-### Optional hAP ac2 driver bundle
+### Verify optional USB support
 
-Use the optional bundle only for this exact tested platform:
-
-```text
-AREDN:        4.26.7.0
-Board:        MikroTik hAP ac2
-Kernel:       6.12.94
-Architecture: arm_cortex-a7_neon-vfpv4
-```
-
-The bundle contains matching packages for:
-
-- `kmod-usb-net`
-- `kmod-usb-net-rndis`
-- `kmod-usb-net-cdc-ether`
-- `kmod-usb-net-cdc-ncm`
-
-#### Install through the AREDN web interface
-
-1. Download the driver ZIP to your computer.
-2. Verify the ZIP against `SHA256SUMS-release.txt`.
-3. Extract the ZIP. **Do not upload the ZIP itself.**
-4. Read `README.txt` and `UPLOAD_ORDER.txt`.
-5. Log in to the AREDN node.
-6. Open **Packages**.
-7. Under **Upload Package**, upload each driver APK in the order listed in `UPLOAD_ORDER.txt`.
-8. Select **Fetch and Install** after choosing each APK.
-9. Reboot after all required APKs install successfully.
-
-#### Install through SSH
-
-The extracted bundle includes `INSTALL-SSH.sh`:
-
-```sh
-cd /tmp/pollywan-usb-drivers
-sha256sum -c SHA256SUMS
-sh ./INSTALL-SSH.sh
-```
-
-The installer performs an offline simulation before installing the matching module APKs. It does not use forced-dependency flags and does not install a replacement `kernel-*.apk` package.
-
-#### Verify USB support
+WAN3 may use only USB network support already present in the exact firmware or
+separately built from its pinned source and feeds with the identical kernel
+package identity. Never reuse r29/stable modules based on board name or kernel
+release alone.
 
 ```sh
 lsmod | grep -E 'usbnet|rndis_host|cdc_ether|cdc_ncm'
 /usr/local/bin/wan3-manager usb-support
 ```
 
-Not every driver must appear in `lsmod`; a driver may be built in, loadable but unused, or not selected by the connected phone.
-
-#### Remove the optional drivers
-
-The bundle includes `UNINSTALL-SSH.sh`:
-
-```sh
-cd /tmp/pollywan-usb-drivers
-sh ./UNINSTALL-SSH.sh
-```
-
-The removal process disables WAN3, removes only the companion driver APKs in reverse dependency order, and leaves PollyWAN installed. WAN1 and WAN2 remain available.
-
-### Tested WAN3 example
-
-The optional bundle was validated on one MikroTik hAP ac2 running AREDN 4.26.7.0 and kernel 6.12.94 with an Android phone exposing a USB-backed interface.
-
-Observed during that test:
-
-```text
-WAN3 address:    192.168.10.57
-Gateway:         192.168.10.1
-Cloudflare colo: SJC
-Measured result: approximately 210 Mbps with a 1 MB test
-```
-
-This is one observed result, not a performance specification or a claim of compatibility with every Android phone.
+Not every driver must appear in `lsmod`; a driver may be built in, loadable but
+unused, or not selected by the connected phone. WAN3 hardware validation for
+r30 remains a matching-nightly gate.
 
 For detailed WAN3 setup and troubleshooting, see [docs/multiwan-usb-wan.md](docs/multiwan-usb-wan.md).
 
@@ -333,7 +244,8 @@ For detailed WAN3 setup and troubleshooting, see [docs/multiwan-usb-wan.md](docs
 - table 103 — WAN3 private routing table
 - table 26 — selected local Internet default
 - table 27 — selected local WAN connected subnet
-- table 28 — qualified local default eligible for Babel export
+- table 28 — native AREDN-owned qualified local export
+- table 23 — local DtD default learned by Babel
 - table 22 — remote Mesh WAN learned by Babel
 
 Tunnel ingress is blocked from local and remote Internet defaults while PollyWAN is enabled.
@@ -416,7 +328,9 @@ make -C openwrt package/aredn-multiwan/compile V=s
 find openwrt/bin -name 'aredn-multiwan-0.1.0-r30.apk' -print -exec sha256sum {} \;
 ```
 
-Static verification is not a substitute for exact kernel-ABI checks, disabled-install testing, port rollback testing, or physical hardware validation.
+Static verification and a successful APK build are preparation only. They are
+not substitutes for exact kernel-ABI checks, disabled-install testing, port
+rollback testing, or matching-main/nightly physical hardware validation.
 
 ## Development workflow
 
@@ -435,6 +349,9 @@ tools/sync-integration.sh apply /path/to/aredn
 
 ## Documentation
 
-Start with [docs/README.md](docs/README.md). Additional verification procedures are in [docs/multiwan-verification.md](docs/multiwan-verification.md), and the upstream USB-driver plan is in [docs/aredn-usb-network-upstream-plan.md](docs/aredn-usb-network-upstream-plan.md).
+Start with [docs/README.md](docs/README.md). The pinned scope is in
+[docs/r30-main-development-plan.md](docs/r30-main-development-plan.md), route
+ownership is in [docs/adr/route-ownership-main.md](docs/adr/route-ownership-main.md),
+and test procedures are in [docs/multiwan-verification.md](docs/multiwan-verification.md).
 
 See `LICENSE` and `AREDNLicense.txt` for licensing and AREDN attribution requirements.
