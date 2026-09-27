@@ -12,6 +12,7 @@ reject_text() { ! grep -F -- "$2" "$1" >/dev/null || fail "$1 unexpectedly conta
 
 SHELL_FILES='files/usr/local/bin/wan-port-manager
 files/usr/local/bin/wan3-manager
+files/usr/local/bin/wan-export-watchdog
 files/usr/local/bin/wan-route-cache
 files/usr/local/bin/wan-sla
 files/usr/local/bin/wan-tunnel-guard
@@ -27,6 +28,7 @@ tests/verify.sh
 tests/mock-port-manager.sh
 tests/mock-route-cache.sh
 tests/mock-tunnel-guard.sh
+tests/mock-export-ownership.sh
 tools/sync-integration.sh'
 
 REQUIRED='Makefile
@@ -107,6 +109,7 @@ require_text Makefile 'Package/aredn-multiwan/prerm'
 require_text Makefile 'files/app/partial/multiwan-style.ut'
 require_text Makefile 'files/app/partial/multiwan.ut'
 require_text Makefile 'files/usr/local/bin/wan-speed-test'
+require_text Makefile 'files/usr/local/bin/wan-export-watchdog'
 require_text Makefile 'files/www/cgi-bin/apps/aredn-multiwan/status.json'
 require_text Makefile 'docs/aredn-sysinfo-integration-plan.md'
 reject_text Makefile 'files/app/main/multiwan.ut'
@@ -147,7 +150,7 @@ require_text "$DEFAULTS" 'set_default speed_result_ttl 21600'
 require_text "$DEFAULTS" 'set_default speed_test_auto 0'
 require_text "$DEFAULTS" 'set_default speed_test_interval 21600'
 require_text "$DEFAULTS" 'set_default speed_test_method cloudflare'
-require_text "$DEFAULTS" "availability|adaptive"
+require_text "$DEFAULTS" "ordered|availability|adaptive"
 require_text "$DEFAULTS" 'cleanup_old_proxy_state()'
 require_text "$DEFAULTS" 'nft delete table inet aredn_wan3_proxy'
 require_text "$DEFAULTS" 'firewall.aredn_multiwan_proxy_wifi'
@@ -182,8 +185,6 @@ require_text "$PORTS" 'mikrotik,hap-ac2|mikrotik,hap-ac3) echo dsa'
 require_text "$PORTS" 'at least one Ethernet port must remain LAN'
 require_text "$PORTS" 'schedule_rollback'
 require_text "$PORTS" 'POLLYWAN_TEST_MODE'
-require_text "$PORTS" 'NATIVE_CONTRACT=/usr/share/aredn/features/pollywan-export-v1'
-require_text "$PORTS" 'Ethernet roles were not applied'
 require_text "$PORTS" 'pending-token'
 require_text "$PORTS" 'confirm_roles'
 require_text "$PORTS" 'restore_backups'
@@ -222,9 +223,9 @@ reject_text "$WAN3" 'gpsd'
 reject_text "$WAN3" 'usb_passthrough'
 require_text files/etc/hotplug.d/net/95-wan3-manager 'wan3_enable'
 require_text files/etc/hotplug.d/net/95-wan3-manager '/sys/class/net/'
-require_text files/etc/hotplug.d/net/95-wan3-manager '/usr/share/aredn/features/pollywan-export-v1'
-require_text files/etc/hotplug.d/iface/95-wan3-manager '/usr/share/aredn/features/pollywan-export-v1'
-require_text files/etc/init.d/wan3-manager 'Native export contract v1 unavailable; controller remains non-mutating'
+require_text files/etc/hotplug.d/iface/95-wan3-manager 'ip -4 route flush table 28 default'
+require_text files/etc/init.d/wan3-manager 'procd_open_instance export-watchdog'
+require_text files/etc/init.d/wan3-manager '/usr/local/bin/wan-export-watchdog'
 
 # Private route tables, selected-route transaction, Babel, and Mesh WAN.
 CACHE=files/usr/local/bin/wan-route-cache
@@ -236,12 +237,16 @@ require_text "$WAN3" 'LOCAL_TABLE=26'
 require_text "$WAN3" 'LOCAL_SUBNET_TABLE=27'
 require_text "$WAN3" 'REMOTE_MESH_TABLE=22'
 require_text "$WAN3" 'LOCAL_DTD_DEFAULT_TABLE=23'
-require_text "$WAN3" 'NATIVE_CONTRACT=/usr/share/aredn/features/pollywan-export-v1'
-require_text "$WAN3" 'EXPORT_REQUEST_FILE="$EXPORT_REQUEST_DIR/export-v1.json"'
-require_text "$WAN3" 'write_export_request()'
-require_text "$WAN3" 'withdraw_export_request()'
+require_text "$WAN3" 'BABEL_EXPORT_TABLE=28'
+require_text "$WAN3" 'native_monitor_takeover()'
+require_text "$WAN3" 'native_monitor_release()'
+require_text "$WAN3" 'native_monitor_takeover=1'
+require_text "$WAN3" 'restart_native_monitor'
+require_text "$WAN3" 'reconcile_export_routes()'
+require_text "$WAN3" 'withdraw_export_if_needed()'
+require_text "$WAN3" 'EXPORT_HEARTBEAT_FILE=/tmp/wan3/export-heartbeat'
 require_text "$WAN3" 'monotonic_seconds()'
-require_text "$WAN3" 'contract) native_contract_available'
+require_text "$WAN3" 'export-withdraw) withdraw_export_if_needed'
 require_text "$WAN3" 'LAN_RULE_PREF=44'
 require_text "$WAN3" 'snapshot_routes'
 require_text "$WAN3" 'restore_route_snapshot'
@@ -252,9 +257,10 @@ require_text "$WAN3" 'replace_default_if_needed "$LOCAL_TABLE" "$device" "$sourc
 require_text "$WAN3" 'replace_default_if_needed main "$device" "$source" "$gateway" 1'
 require_text "$WAN3" 'default_route_matches'
 require_text "$WAN3" 'replace_default_if_needed'
-reject_text "$WAN3" 'ip -4 route flush table 28'
-reject_text "$WAN3" 'ip -4 route replace table 28'
-reject_text "$WAN3" 'ip -4 route add table 28'
+require_text "$WAN3" 'install_export_route default'
+require_text "$WAN3" 'install_export_route 0.0.0.0/1'
+require_text "$WAN3" 'install_export_route 128.0.0.0/1'
+require_text "$WAN3" 'ip -4 route show table "$BABEL_EXPORT_TABLE"'
 require_text "$WAN3" 'table 22 remote Mesh WAN is available'
 require_text "$WAN3" 'table 23 local DtD default is available'
 require_text "$WAN3" 'local_dtd_default'
@@ -264,6 +270,12 @@ reject_text "$WAN3" 'proxy-start'
 reject_text "$WAN3" 'proxy-stop'
 reject_text "$WAN3" 'redsocks'
 reject_text "$WAN3" 'HTTP CONNECT'
+reject_text "$WAN3" 'pollywan-export-v1'
+reject_text "$PORTS" 'pollywan-export-v1'
+reject_text files/etc/hotplug.d/iface/95-wan3-manager 'pollywan-export-v1'
+require_text files/usr/local/bin/wan-export-watchdog 'Withdrawing stale table-28 export'
+require_text files/usr/local/bin/wan-export-watchdog 'wan3-manager export-withdraw'
+require_text files/usr/local/bin/wan-export-watchdog 'POLLYWAN_WATCHDOG_ONCE'
 
 # Adaptive SLA algorithm.
 SLA=files/usr/local/bin/wan-sla
@@ -306,6 +318,7 @@ require_text "$SLA" 'result_ttl'
 require_text "$SLA" 'speed_test_interval'
 require_text "$SLA" '/tmp/wan-speed/$name.json'
 require_text "$SLA" 'selection_mode=automatic'
+require_text "$SLA" 'ordered|availability|adaptive'
 require_text "$SLA" '[ "$raw_score" -eq 1 ] || [ "$raw_score" -ge "$min_score" ]'
 require_text "$SLA" 'table 22 may provide remote Mesh WAN and table 23 may provide a local DtD default'
 require_text "$SLA" 'wan1_transport'
@@ -423,7 +436,7 @@ require_text files/app/main/status/e/wan-policy.ut 'Automatic'
 reject_text files/app/main/status/e/wan-policy.ut '>Availability<'
 reject_text files/app/main/status/e/wan-policy.ut '>Adaptive speed bins<'
 require_text files/app/partial/multiwan-page.ut 'runtimeState(enabled, status)'
-require_text files/app/partial/multiwan-page.ut 'Disabled", "Unsupported", "Idle", "Checking", "Healthy", "Degraded", "Holding", "Failing over", "No eligible WAN'
+require_text files/app/partial/multiwan-page.ut 'Disabled", "Idle", "Checking", "Healthy", "Degraded", "Holding", "Failing over", "No eligible WAN'
 require_text files/app/partial/multiwan-page.ut 'pw-state-current'
 require_text files/app/partial/multiwan-page.ut 'pw-state-inactive'
 require_text files/app/partial/multiwan-page.ut 'item === currentRuntime ? "pw-state-current " + runtimeTone(item) : "pw-state-inactive"'
@@ -533,6 +546,7 @@ actual_manifest="$(
 ./tests/mock-port-manager.sh
 ./tests/mock-route-cache.sh
 ./tests/mock-tunnel-guard.sh
+./tests/mock-export-ownership.sh
 ./tests/test-selection-model.py
 
 python3 - <<'PY'
@@ -606,6 +620,9 @@ body = raw.split('\r\n\r\n', 1)[1]
 data = json.loads(body)
 assert data['schema_version'] == 1
 assert data['package_version'] == '0.1.0-r30'
+assert data['enabled'] is None
+assert data['mode'] is None
+assert data['probe_reason'] == 'cache_unavailable'
 PY
 
 echo 'PollyWAN r30 static and mock verification passed'

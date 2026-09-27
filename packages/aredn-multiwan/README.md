@@ -6,11 +6,12 @@ PollyWAN is disabled and inert immediately after installation. It does not remap
 
 PollyWAN is experimental and is not an official AREDN release.
 
-Active r30 routing requires matching main-derived firmware containing the
-reviewed native export contract. The APK never overwrites core firmware files.
-On stock firmware without that contract, it reports unsupported and remains
-non-mutating. No r30 production release or nightly hardware validation is
-claimed by this branch.
+Active r30 routing targets unmodified matching AREDN main/nightly firmware.
+The APK never overwrites core firmware files. While enabled, it saves and
+temporarily suppresses the stock WAN monitor settings, owns the default-like
+routes in table 28, and restores ordinary AREDN ownership on disable or
+removal. No r30 production release or nightly hardware validation is claimed
+by this branch.
 
 ## Features
 
@@ -244,7 +245,7 @@ For detailed WAN3 setup and troubleshooting, see [docs/multiwan-usb-wan.md](docs
 - table 103 — WAN3 private routing table
 - table 26 — selected local Internet default
 - table 27 — selected local WAN connected subnet
-- table 28 — native AREDN-owned qualified local export
+- table 28 — PollyWAN-owned qualified local export while enabled; stock AREDN-owned when disabled
 - table 23 — local DtD default learned by Babel
 - table 22 — remote Mesh WAN learned by Babel
 

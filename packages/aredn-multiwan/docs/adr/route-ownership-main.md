@@ -1,67 +1,67 @@
-# ADR: native ownership of table 28 on AREDN main
+# ADR: package ownership of table 28 on AREDN main
 
-Status: proposed for patched-main integration validation
+Status: implemented in r30; hardware validation not run
 
 ## Decision
 
-AREDN's native `wan_monitor.uc` is the single writer for routing table 28.
-PollyWAN r30 owns local selection table 26, the selected connected route in
-table 27, candidate-private tables 101/102/103, health classification, the UI,
-and package telemetry. It never adds, replaces, deletes, flushes, snapshots, or
-restores table 28.
+PollyWAN r30 is self-contained and targets unmodified AREDN main/nightly
+firmware. While enabled, PollyWAN is the single writer of default-like routes
+in table 28. It also owns local selection table 26, the selected connected
+route in table 27, candidate-private tables 101/102/103, health
+classification, UI, and package telemetry.
 
-The package atomically writes `/var/run/pollywan/export-v1.json`, mode 0600 in
-a mode-0700 directory. Schema 1 contains only an eligibility boolean, validated
-device/source/gateway values, split-default intent, a monotonic timestamp, and
-a reason. It contains no command. The native monitor validates the schema,
-characters, IPv4 values, and a 180-second maximum age. Missing, malformed,
-future-dated, stale, or ineligible requests withdraw `/0`, `0.0.0.0/1`, and
-`128.0.0.0/1` owned by table 28.
+The package does not replace `wan_monitor.uc`, `11-meshrouting`, core sysinfo,
+or any other firmware-owned file. During takeover it stores the exact presence
+and value of AREDN's `monitor1` and `monitor2` options, removes those targets,
+commits the handoff, and signals only the native `wan_monitor` task to restart.
+With no targets, that stock task exits rather than racing PollyWAN.
 
-The package touches `/tmp/mgr/wan_monitor` and signals the existing manager
-only when request semantics change. Refresh-only writes extend freshness
-without causing route churn or a manager restart. The monitor reconciles at a
-10-second bound and writes only when the installed route set differs.
+PollyWAN directly reconciles `default`, `0.0.0.0/1`, and `128.0.0.0/1` in
+table 28. It writes only when the desired route set differs. A later package
+hotplug handler synchronously removes routes that stock `11-meshrouting` may
+have created before asynchronous health evaluation begins.
 
-## Firmware boundary
+## Fail-closed behavior
 
-The AREDN hook is a separate integration change to:
+Each qualified export refreshes a monotonic heartbeat. A separate procd
+watchdog withdraws table 28 when that heartbeat is absent, moves backward, or
+becomes stale. The timeout is at least 180 seconds and is extended to cover a
+deliberately longer configured standby evaluation interval.
 
-- `files/usr/local/mgr/wan_monitor.uc`
-- `files/etc/hotplug.d/iface/11-meshrouting`
-- `files/usr/share/aredn/features/pollywan-export-v1`
-
-The APK does not install or overwrite these files. The feature marker is both
-capability negotiation and a safety gate. If it is absent, r30 records
-`integration_supported=false`, does not reconcile ports, create WAN3, install
-tunnel rules, or change routes, and the UI rejects enablement.
+Stop, interface-change, failure, disable, upgrade, and removal paths withdraw
+all three default-like prefixes. Failed selection transactions restore the
+previous main/26/27/28 route snapshot.
 
 ## Lifecycle
 
-- Disabled: stock hotplug and native monitor behavior remains active.
-- Startup/enable: a request begins ineligible; local selection is installed,
-  then fresh HTTPS observations may produce an eligible request.
-- First failed upstream observation: the request becomes ineligible even while
-  local selection hysteresis retains the path.
-- Interface hotplug: the package invalidates the request before reevaluation;
-  native hotplug does not race a second table-28 writer.
-- Package daemon death: request refresh stops and the native monitor withdraws
-  it after the age bound.
-- Native manager restart: it rereads UCI and the request, then reconciles the
-  complete `/0` and split-default set.
-- Disable/removal: the package writes an ineligible request and restarts the
-  native monitor after disabling its UCI opt-in; ordinary AREDN WAN ownership
-  resumes.
-- Failed local route transaction: main/26/27 are restored; the prior export
-  request is retained unless the interface event already invalidated it.
+- Disabled after installation: no takeover and no package network changes.
+- Enable/start: save native monitor options, suppress its targets, restart that
+  task, install package rules, and begin health evaluation.
+- Healthy qualified path: publish the selected local WAN in table 28.
+- First failed upstream decision: withdraw table 28 while local selection may
+  remain under its separate hysteresis.
+- Interface hotplug: synchronously withdraw stock/default-like exports, then
+  requalify asynchronously.
+- Daemon failure: the heartbeat watchdog withdraws stale export routes.
+- Service stop while still configured enabled: fail closed and retain the
+  native-monitor handoff.
+- Disable/removal: withdraw package routes, restore ordinary WAN1 routing,
+  restore the saved native monitor options, and restart that task.
+
+If an administrator changes `monitor1` or `monitor2` while takeover is active,
+the next reconciliation preserves the new value as the setting to restore and
+continues suppressing the competing task.
+
+## Routing boundaries
 
 Tables 23 and 22 remain native inputs. Table 23 is the local DtD default;
-table 22 is a remote Babel-learned mesh default. PollyWAN reads and reports
-them separately and never deletes or republishes either as a local WAN.
+table 22 is a remote Babel-learned Mesh default. PollyWAN reads and reports
+them separately and never republishes either as a local WAN.
 
 ## Consequences
 
-Stock official nightlies lacking the hook are intentionally unsupported for
-active r30 routing. Passing on a firmware containing this change is reported as
-patched-main evidence, not stock-nightly compatibility. A future upstreamed
-contract could make the same package compatible with an unmodified nightly.
+R30 no longer needs a custom firmware image or a feature marker. The package
+has more lifecycle responsibility: native monitor configuration must always be
+restored, hotplug races must remain covered, and the independent export
+watchdog is mandatory. Static and mock validation do not replace live testing
+on the pinned, unmodified nightly.

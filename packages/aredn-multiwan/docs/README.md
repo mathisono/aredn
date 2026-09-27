@@ -8,7 +8,7 @@
 - [Future AREDN sysinfo integration plan](aredn-sysinfo-integration-plan.md)
 - [r30 main/nightly development plan](r30-main-development-plan.md)
 - [AREDN main compatibility matrix](main-compatibility-matrix.md)
-- [Native table-28 ownership ADR](adr/route-ownership-main.md)
+- [Package table-28 ownership ADR](adr/route-ownership-main.md)
 - [r29-to-r30 migration runbook](main-migration-runbook.md)
 - [OpenClaw prompt for mse-88 → hub5](../tools/openclaw-build-test-prompt.md)
 - [r29 development and compatibility plan](r29-development-plan.md)

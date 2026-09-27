@@ -4,6 +4,9 @@
 set -eu
 
 [ "$(id -u)" = 0 ] || { echo 'SKIP: mock route-cache chroot requires root'; exit 0; }
+if ! command -v chroot >/dev/null 2>&1; then
+    chroot() { busybox chroot "$@"; }
+fi
 ROOT_SRC="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 ROOT="${TMPDIR:-/tmp}/pollywan-route-cache-test.$$"
 trap 'rm -rf "$ROOT"' EXIT HUP INT TERM

@@ -1,0 +1,53 @@
+#!/bin/sh
+# Fail closed if PollyWAN stops refreshing its qualified table-28 export.
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+HEARTBEAT=/tmp/wan3/export-heartbeat
+
+uci_get()
+{
+    uci -c /etc/config.mesh -q get "aredn.multiwan.$1" 2>/dev/null || true
+}
+
+valid_uint()
+{
+    case "${1:-}" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac
+}
+
+monotonic_seconds()
+{
+    awk '{ sub(/\..*/, "", $1); print $1 }' /proc/uptime 2>/dev/null
+}
+
+watchdog_check()
+{
+    if ip -4 route show table 28 default 2>/dev/null | grep -q '^default'; then
+        now="$(monotonic_seconds)"
+        stamp="$(cat "$HEARTBEAT" 2>/dev/null || true)"
+        interval="$(uci_get standby_health_interval)"
+        valid_uint "$interval" || interval=90
+        [ "$interval" -ge 10 ] || interval=10
+        [ "$interval" -le 3600 ] || interval=3600
+        timeout=$((interval + 60))
+        [ "$timeout" -ge 180 ] || timeout=180
+        if ! valid_uint "$now" || ! valid_uint "$stamp" || [ "$now" -lt "$stamp" ] || [ $((now - stamp)) -gt "$timeout" ]; then
+            logger -t aredn-multiwan "Withdrawing stale table-28 export after missing health heartbeat"
+            /usr/local/bin/wan3-manager export-withdraw >/dev/null 2>&1 || true
+        fi
+    fi
+}
+
+if [ "${POLLYWAN_WATCHDOG_ONCE:-0}" = 1 ]; then
+    watchdog_check
+    exit 0
+fi
+
+while [ "$(uci_get enabled)" = 1 ]; do
+    watchdog_check
+    sleep 10
+done
+
+exit 0

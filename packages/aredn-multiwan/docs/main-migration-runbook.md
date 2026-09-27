@@ -20,11 +20,10 @@ r30 is tested only with firmware derived from the recorded AREDN source.
 
 ## Clean install lane
 
-Use a clean matching main-derived lab image first. Confirm the native feature
-marker, then simulate installation against only the deliberate local APK set:
+Use a clean matching unmodified main/nightly lab image first, then simulate
+installation against only the deliberate local APK set:
 
 ```sh
-test -r /usr/share/aredn/features/pollywan-export-v1
 apk add --simulate --no-network --allow-untrusted /tmp/aredn-multiwan-0.1.0-r30.apk
 ```
 
@@ -47,8 +46,9 @@ An unavailable WAN3 is acceptable; an old stable module is not.
 
 ## Rollback
 
-Disable PollyWAN before removing it. Confirm the native monitor has resumed
-ordinary WAN ownership, package tables/rules and includes are absent, table 23
+Disable PollyWAN before removing it. Confirm its saved native monitor targets
+were restored, the native monitor resumed ordinary WAN ownership, package
+tables/rules and includes are absent, table 23
 and 22 remain distinct, tunnel guard rules are removed, and management works.
 Firmware rollback returns to the retained stable image and r29 artifacts only;
 never install r29 into the nightly as a shortcut.
@@ -56,3 +56,21 @@ never install r29 into the nightly as a shortcut.
 Raw backups and evidence may contain credentials or keys and remain private.
 Public reports contain sanitized identities, full artifact hashes, commit IDs,
 and explicit PASS/FAIL/NOT RUN results only.
+
+## Recurring nightly cycle before the release candidate
+
+Treat every newly installed nightly as a new compatibility cycle:
+
+1. Record its build ID, full source SHA, kernel package identity, architecture,
+   native route-file hashes, and the delta from the preceding cycle.
+2. Preserve the prior cycle's report and artifact; never overwrite its PASS,
+   PARTIAL, FAIL, or NOT RUN results.
+3. Rebuild the APK from the reviewed source, record its full hash, inspect its
+   payload, and repeat the exact-node offline dependency simulation.
+4. Run C00 and disabled C01 before enabling. Stop immediately if native files,
+   route ownership, package dependencies, or management recovery differ.
+5. Re-run every gate affected by the upstream delta, plus C07, C10, C11, C15,
+   C16, and the soak even when the package source is unchanged.
+6. Record the result against that nightly only. A passing weekly snapshot does
+   not become a release-candidate claim until the selected RC cycle itself
+   passes.

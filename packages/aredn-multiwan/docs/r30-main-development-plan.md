@@ -13,7 +13,7 @@ Update PollyWAN's development branch for the **current authoritative AREDN main 
 
 The required runtime target is a designated lab node actually running that nightly/main-derived firmware. If the node still runs the previous stable firmware, only read-only inventory and backup work may use that node; it cannot satisfy any r30 runtime compatibility gate. Do not install r29 on a nightly and label that a completed migration, or test r30 on stable and label it main-compatible.
 
-The inspected `docs/r29-development-plan.md` explicitly defines r29 as the last planned 4.26.7.0-targeted release and r30 as the nightly-targeted line. It also requires the native WAN manager to become the single table-28 owner. Read that document before modifying code. [S2]
+The inspected `docs/r29-development-plan.md` explicitly defines r29 as the last planned 4.26.7.0-targeted release and r30 as the nightly-targeted line. R30 supersedes its earlier native-owner proposal: the package must run on unmodified main/nightly firmware and perform a reversible package-side table-28 handoff. [S2]
 
 Keep one authoritative PollyWAN source repository and a synchronized package subtree in the AREDN integration repository. Track native AREDN integration changes separately from the package subtree. Keep the public telemetry endpoint package-owned; **do not modify `/a/sysinfo`, `/cgi-bin/sysinfo.json`, or AREDN's `sysinfo.ut`** in this work.
 
@@ -110,7 +110,7 @@ This gate is a prerequisite to runtime acceptance, not a prerequisite to safe so
 1. Fetch authoritative `aredn/aredn` main and record its full SHA. Do not use the user fork's `origin/main` as upstream evidence.
 2. Identify the actual published nightly for the exact lab board. Download and retain the firmware, its published checksum where available, and build/package metadata. Resolve its build commit to a full upstream SHA. AREDN documents that nightly filenames include a build date and commit identifier. [S15]
 3. Record whether the nightly includes the main changes being targeted. A nightly may lag main. If its SHA differs, inspect and record that delta. Either explicitly select the available recent nightly's SHA for this cycle or build unmodified upstream main at the recorded target SHA. Do not claim testing of commits absent from the flashed image.
-4. Name a private unmodified-main build accurately: `unmodified-main-build`, not an official downloaded nightly. If native integration patches are required, name that later image `patched-main-integration-build` and record its patch/integration SHA separately.
+4. Name a private unmodified-main build accurately: `unmodified-main-build`, not an official downloaded nightly. Do not introduce native integration patches for r30.
 5. Rediscover the node over the existing authenticated route. Treat hostnames/IP addresses and historical firmware versions as hints only. Record board, running build/version, package architecture, full kernel identity, and installed PollyWAN version.
 6. Require authorization and independent recovery before any flash. Follow current AREDN firmware procedures, not a copied legacy OpenWrt command. Current official guidance says CLI upgrades use `/usr/local/bin/aredn_sysupgrade`, not legacy `sysupgrade`; inspect the exact installed tool's usage and board procedure before invoking it. [S17]
 7. Capture an **unmodified nightly AREDN baseline with PollyWAN absent or positively inert** before enabling changed code. Save sanitized bridge, VLAN, netifd, firewall, policy-rule, default-route, WAN-monitor, Babel and UI observations.
@@ -185,21 +185,21 @@ For every relevant route/table/rule, identify all writers and readers: native WA
 
 **Gate A:** no unknown table-28 writer, no unidentified table-23 policy, and every proposed modification linked to a specific source function or observed failure.
 
-## 5. Milestone B — native-manager integration design
+## 5. Milestone B — package-owned export integration
 
-The nightly direction is **native WAN management with a single export owner**, preserving PollyWAN's behavioral contract. It is not “run both controllers and hope their routes agree.” [S2]
+The nightly direction is **one active table-28 owner without firmware patches**. Stock AREDN owns table 28 while PollyWAN is disabled; the package owns default-like table-28 routes while enabled.
 
-Preferred design: extend or delegate through AREDN's native UCode WAN manager using a small, explicit, feature-detectable integration contract. PollyWAN supplies configuration, per-WAN health/classification, UI and cached status. The native controller owns the export lifecycle. Keep short-lived shell helpers only where useful; do not run a second permanent route-writing daemon.
+The package saves and suppresses the native monitor targets during takeover, signals only that manager task to restart, reconciles qualified exports directly, and restores the saved targets during disable/removal. A separate heartbeat watchdog withdraws stale exports if the health controller stops refreshing them.
 
-The exact module/hook API must follow the inspected manager lifecycle. Document its name, version, trust boundaries, inputs, outputs and fallback behavior in the ADR before coding. Source adapters must be bounded, root-owned and validated; do not execute arbitrary commands from JSON or HTTP parameters.
+Document takeover state, trust boundaries, route inputs, watchdog behavior, and restoration rules in the ADR. Source adapters must be bounded, root-owned and validated; do not execute arbitrary commands from JSON or HTTP parameters.
 
 Important packaging boundary:
 
-- A needed change to native `wan_monitor.uc` or hotplug belongs in a separately reviewable AREDN integration commit **outside** `packages/aredn-multiwan`.
-- The PollyWAN APK must not silently overwrite those base-firmware files or sed-patch them during installation.
-- First test the actual unmodified nightly/native behavior and document the proven missing integration contract. If no safe package-owned handoff is possible and a native hook is necessary, prepare that hook as a separate reviewable integration patch and, for an authorized lab test, an explicitly identified **patched main-derived integration firmware** from the same upstream baseline. A pass on patched firmware is not a pass on the official unmodified nightly. Do not broaden the core changes or modify sysinfo.
-- A stock nightly without the necessary hook must report unsupported integration and remain non-mutating. Do not silently start the old controller beside the native one.
-- The future sysinfo hook remains deferred even if a native WAN hook is required now.
+- Do not modify or overwrite native `wan_monitor.uc`, `11-meshrouting`, feature markers, or sysinfo.
+- Suppress the competing native monitor through saved/restored configuration, not by stopping the whole AREDN manager.
+- Run a later package hotplug handler synchronously to remove any stock WAN export before asynchronous requalification.
+- A clean stock nightly is the validation target; a custom patched firmware image does not satisfy this design.
+- The future sysinfo hook remains deferred.
 
 Cover takeover, startup, shutdown, watchdog failure, unexpected process death, package upgrade, rollback and removal. Stop new route writes during handoff; do not allow a gap in tunnel isolation. Preserve administrator monitor settings and restore only values this integration actually owns. Do not erase legitimate later user changes.
 
@@ -353,7 +353,7 @@ ubus call network.interface dump
 
 Check command availability; preserve failures as evidence rather than invent output. Avoid raw `wg showconf`, private keys, passwords or unredacted full configuration in public logs. Backups containing secrets remain local/private with restrictive permissions.
 
-Require Gate N0 first: a designated lab hAP ac2 actually running the matched nightly/main-derived firmware, with original native behavior captured before PollyWAN is enabled. An old stable node is not an alternate acceptance target. If flashing is needed, obtain authorization and establish recovery before doing it. When the baseline is a patched main-derived integration build, label every resulting test as patched-firmware evidence; do not call it official-nightly compatibility.
+Require Gate N0 first: a designated lab hAP ac2 actually running the matched unmodified nightly/main-derived firmware, with original native behavior captured before PollyWAN is enabled. An old stable node is not an alternate acceptance target. If flashing is needed, obtain authorization and establish recovery before doing it.
 
 Before installing r30 on that nightly, run the matching `apk add --simulate --no-network --allow-untrusted` against the deliberate local package set. Reject replacement kernels, unexpected removals, downgrades and incompatible dependencies. Inspect actual upgrade hooks before assuming only the UI restarts. Test clean installation first. Test reviewed r29-to-r30 configuration migration separately, without running the old stable-targeted r29 package on nightly and without relying on automatic package-store replay.
 
@@ -394,7 +394,7 @@ Prepare scoped commits such as:
 ```
 Record pinned AREDN main compatibility contract
 Handle explicit empty port assignments
-Integrate native single-owner WAN export control
+Implement reversible package-owned WAN export control
 Preserve default-route and tunnel policy across main changes
 Add current-main generation and lifecycle regression tests
 Document r30 migration and tested compatibility
@@ -405,13 +405,13 @@ Push branches and open draft PRs in the user's repositories. Clearly distinguish
 Final report must include:
 
 - New package and integration branch/commit IDs; pinned upstream and feed SHAs.
-- Native AREDN files changed separately from the package subtree.
+- Proof that no native AREDN firmware files are changed.
 - Single-owner proof including boot/hotplug/upgrade/restart cases.
 - Table 23 and 22 handling; `/0` and split-default checks.
 - Port/firewall/RF/XLink/Cancel/rollback results.
 - Source-bound blackhole, damping, no-op route and tunnel/MTU results.
 - APK path, size, computed full SHA-256 and dependencies; actual flashed nightly filename/build/source SHA/kernel identity; observed main SHA and any untested delta.
-- Unmodified-nightly baseline versus patched-integration results, clearly separated; proof old stable r29 did not auto-reinstall or run on nightly.
+- Unmodified-nightly results and proof old stable r29 did not auto-reinstall or run on nightly.
 - GUI and package-telemetry results; sysinfo unchanged.
 - Hardware/soak results explicitly split into PASS, FAIL, NOT RUN or RUNNING.
 - Rollback/current node state, limitations and next actionable step.
@@ -421,11 +421,10 @@ Use one accurate status:
 ```
 POLLYWAN_R30_READY_FOR_NIGHTLY_TEST
 POLLYWAN_R30_NIGHTLY_COMPAT_VALIDATED_AT_<UPSTREAM_SHORT_SHA>
-POLLYWAN_R30_PATCHED_MAIN_VALIDATED_AT_<UPSTREAM_SHORT_SHA>_<INTEGRATION_SHORT_SHA>
 POLLYWAN_R30_NIGHTLY_COMPAT_BLOCKED_<SPECIFIC_GATE>
 ```
 
-Use the READY status only when its source/build requirements genuinely passed and matching-nightly runtime work remains. The NIGHTLY_COMPAT_VALIDATED status requires actual tests on an unmodified official nightly or unmodified main-derived build at the recorded SHA (identify which). PATCHED_MAIN_VALIDATED explicitly does not claim stock-nightly compatibility. If a required acceptance gate is NOT RUN, return READY with its remaining gates instead of a validated status.
+Use the READY status only when its source/build requirements genuinely passed and matching-nightly runtime work remains. The NIGHTLY_COMPAT_VALIDATED status requires actual tests on an unmodified official nightly or unmodified main-derived build at the recorded SHA (identify which). A patched firmware image is historical evidence only and cannot produce an r30 validation status. If a required acceptance gate is NOT RUN, return READY with its remaining gates instead of a validated status.
 
 Do not report compatibility with all future main commits. No stable support qualification, production release or merge is part of this handoff by default.
 

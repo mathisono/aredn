@@ -111,7 +111,7 @@ cleanup_old_proxy_state()
 
 # Present only Manual and Automatic while preserving old values on upgrade.
 case "$($UCI -q get aredn.multiwan.selection_mode 2>/dev/null)" in
-    availability|adaptive) $UCI set aredn.multiwan.selection_mode='automatic' ;;
+    ordered|availability|adaptive) $UCI set aredn.multiwan.selection_mode='automatic' ;;
 esac
 
 cleanup_old_proxy_state

@@ -24,8 +24,9 @@ define Package/aredn-multiwan/description
  hAP ac2 and hAP ac3. It treats WAN 1 as either administrator-selected hAP Ethernet or the
  existing AREDN Wi-Fi client logical interface, assigns WAN 2 to Ethernet,
  keeps WAN 3 fixed to an Android USB RNDIS/CDC Ethernet tether, regulates the three local links using health and
- bounded speed classes, manages local routing tables 26/27 and requests export
- through the native AREDN table-28 owner, preserves
+ bounded speed classes, manages local routing tables 26/27 and qualified
+ table-28 export while enabled, restores stock AREDN WAN monitoring when
+ disabled, preserves
  table 22 as the remote Mesh WAN fallback, reports table 23 local DtD defaults
  separately, prevents unqualified Babel default
  advertisement, and hard-blocks tunnel ingress from Internet defaults.
@@ -65,7 +66,7 @@ touch /tmp/wan-sla/inhibit
 /etc/init.d/wan3-manager stop >/dev/null 2>&1 || true
 /usr/local/bin/wan-port-manager restore >/dev/null 2>&1 || true
 /usr/local/bin/wan3-manager disable >/dev/null 2>&1 || true
-rm -f /var/run/pollywan/export-v1.json
+rm -f /tmp/wan3/export-heartbeat
 /usr/local/bin/wan-route-cache remove >/dev/null 2>&1 || true
 /usr/local/bin/wan-tunnel-guard remove >/dev/null 2>&1 || true
 /etc/init.d/wan3-manager disable >/dev/null 2>&1 || true
@@ -79,6 +80,7 @@ define Package/aredn-multiwan/install
 	$(INSTALL_DIR) $(1)/usr/local/bin
 	$(INSTALL_BIN) ./files/usr/local/bin/wan-port-manager $(1)/usr/local/bin/
 	$(INSTALL_BIN) ./files/usr/local/bin/wan3-manager $(1)/usr/local/bin/
+	$(INSTALL_BIN) ./files/usr/local/bin/wan-export-watchdog $(1)/usr/local/bin/
 	$(INSTALL_BIN) ./files/usr/local/bin/wan-route-cache $(1)/usr/local/bin/
 	$(INSTALL_BIN) ./files/usr/local/bin/wan-sla $(1)/usr/local/bin/
 	$(INSTALL_BIN) ./files/usr/local/bin/wan-tunnel-guard $(1)/usr/local/bin/

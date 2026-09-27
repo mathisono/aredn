@@ -4,6 +4,9 @@
 set -eu
 
 [ "$(id -u)" = 0 ] || { echo 'SKIP: mock port-manager chroot requires root'; exit 0; }
+if ! command -v chroot >/dev/null 2>&1; then
+    chroot() { busybox chroot "$@"; }
+fi
 ROOT_SRC="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 TMP="${TMPDIR:-/tmp}/pollywan-port-test.$$"
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
@@ -15,7 +18,6 @@ setup_root()
         "$root"/etc/config.mesh "$root"/etc/aredn_include "$root"/etc/init.d "$root"/tmp/sysinfo \
         "$root"/tmp/wan-sla "$root"/sys/class/net "$root"/dev "$root"/lib/x86_64-linux-gnu "$root"/lib64 \
         "$root"/usr/share/aredn/features
-    printf '%s\n' 'test contract' > "$root/usr/share/aredn/features/pollywan-export-v1"
     cp /usr/bin/busybox "$root/bin/busybox"
     cp /lib/x86_64-linux-gnu/libresolv.so.2 "$root/lib/x86_64-linux-gnu/"
     cp /lib/x86_64-linux-gnu/libc.so.6 "$root/lib/x86_64-linux-gnu/"
@@ -295,15 +297,9 @@ run_conflict_cases()
         exit 1
     fi
     grep -F 'invalid:both-radios' "$root/tmp/transport.out" >/dev/null
-    rm "$root/usr/share/aredn/features/pollywan-export-v1"
-    if POLLYWAN_TEST_MODE=1 chroot "$root" /usr/local/bin/wan-port-manager apply >"$root/tmp/unsupported.out" 2>&1; then
-        echo 'Ethernet roles were applied without the native export contract' >&2
-        exit 1
-    fi
-    grep -F 'Native export contract v1 unavailable' "$root/tmp/wan-port-manager/state.json" >/dev/null
     [ ! -e "$root/etc/aredn_include/.aredn-multiwan-ports" ]
     assert_gps_unchanged "$root"
-    echo 'mock Wi-Fi WAN conflict and unsupported-firmware rejection passed'
+    echo 'mock Wi-Fi WAN conflict rejection passed'
 }
 
 run_rf_vlan_cases()
