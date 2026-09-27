@@ -34,9 +34,11 @@ Updated: 2026-09-27
   upstream source.
 - Current APK build: PASS, 65,566 bytes,
   SHA-256 `b6cfb354dbc5ea0f47bafe47fb025fccb3a6ea1373b96875a9178c942b89d6fb`.
-- Exact-node offline install simulation: PASS; one same-version package
-  replacement, no dependency fetch, kernel replacement, downgrade, removal,
-  or additional package transaction.
+- Exact-node offline install simulation: PASS for the immediately preceding
+  APK with identical package metadata and dependency closure; one same-version
+  package replacement, no dependency fetch, kernel replacement, downgrade,
+  removal, or additional package transaction. Re-simulation of the final APK
+  hash remains pending after SSH recovery.
 
 ## 20260924-f45bfa01 runtime matrix
 
@@ -79,8 +81,9 @@ Remaining acceptance work:
 4. Run and record the six-hour hAP ac2 soak.
 5. Repeat the frozen cycle against the next installed nightly; do not carry a
    compatibility claim forward merely because the package hash is unchanged.
-6. Commit, push, and review after the node is recovered. Do not publish a
-   release before the release-candidate cycle passes.
+6. The source commits are pushed for review. Update runtime evidence after the
+   node is recovered; do not publish a release before the release-candidate
+   cycle passes.
 
 Current status:
 `POLLYWAN_R30_NIGHTLY_COMPAT_BLOCKED_C15_MANAGEMENT_ROUTE_AFTER_REBOOT`.
